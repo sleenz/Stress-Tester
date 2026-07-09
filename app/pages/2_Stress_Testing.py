@@ -1293,16 +1293,21 @@ with tab4:
                 st.plotly_chart(_fig_mc_cmp, width="stretch")
 
 
+_EDGE_COLORSCALE = "Turbo"
+
+
 def _edge_color_gradient(corr: float) -> str:
-    """Full diverging colorscale (RdBu_r — same scale already used elsewhere
-    in this app for correlation heatmaps, e.g. the Sector Shock tab's DCC
-    Correlation Matrix) instead of network.py's edge_color_for_correlation()
-    2-color coral/steelblue interpolation. Kept in the page, not in
-    network.py, so that reviewed/merged module's own coloring function stays
-    untouched — positive correlation -> red, negative -> blue, matching the
-    rest of the app's convention."""
+    """Full-range colorscale (Turbo) instead of network.py's
+    edge_color_for_correlation() 2-color coral/steelblue interpolation, and
+    instead of a red-white-blue diverging scale (e.g. RdBu, used elsewhere in
+    this app for correlation heatmaps) — a diverging scale washes out to
+    near-white at correlation ~0, making weak correlations hard to tell apart.
+    Turbo stays vivid and distinguishable across the entire [-1, 1] range:
+    dark purple/blue (-1) -> cyan -> green (~0) -> yellow/orange -> dark red
+    (+1). Kept in the page, not in network.py, so that reviewed/merged
+    module's own coloring function stays untouched."""
     t = (max(-1.0, min(1.0, corr)) + 1.0) / 2.0  # [-1, 1] -> [0, 1]
-    return pcolors.sample_colorscale("RdBu_r", [t])[0]
+    return pcolors.sample_colorscale(_EDGE_COLORSCALE, [t])[0]
 
 
 def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: dict,
@@ -1320,7 +1325,13 @@ def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: 
     Plotly's own hover-matching for a "lines" trace only triggers near an
     actual plotted point (here, the two endpoints), not along the interior of
     the segment, so without a midpoint marker hovering over the middle of a
-    long edge shows nothing."""
+    long edge shows nothing.
+
+    Every edge is a normal solid line — no dashing. MST/backbone edges are
+    still drawn thicker than additional threshold-cleared edges, but that
+    distinction is carried by width alone, not line style, so color is never
+    fighting a dotted pattern for the eye's attention. A dedicated invisible
+    marker (real range -1..+1) adds the colorbar legend for the gradient."""
     pos = nx.spring_layout(graph, seed=42)
 
     edge_traces = []
@@ -1334,19 +1345,27 @@ def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: 
         edge_traces.append(go.Scatter(
             x=[x0, x1, None], y=[y0, y1, None],
             mode="lines",
-            line=dict(width=3 if is_mst else 1, color=color, dash=None if is_mst else "dot"),
+            line=dict(width=4 if is_mst else 1.5, color=color),
             hoverinfo="skip",
             showlegend=False,
         ))
         midpoint_x.append((x0 + x1) / 2)
         midpoint_y.append((y0 + y1) / 2)
         midpoint_text.append(f"{u} – {v}: ρ={corr:.2f}")
-        midpoint_color.append(color)
+        midpoint_color.append(corr)
 
     edge_hover_trace = go.Scatter(
         x=midpoint_x, y=midpoint_y,
         mode="markers",
-        marker=dict(size=14, color=midpoint_color, opacity=0.0),
+        marker=dict(
+            size=14, opacity=0.0,
+            color=midpoint_color, colorscale=_EDGE_COLORSCALE, cmin=-1.0, cmax=1.0,
+            colorbar=dict(
+                title=dict(text="Correlation (ρ)", side="right"),
+                tickvals=[-1, -0.5, 0, 0.5, 1],
+                len=0.75,
+            ),
+        ),
         hoverinfo="text",
         hovertext=midpoint_text,
         showlegend=False,
@@ -1508,12 +1527,12 @@ with tab5:
             st.caption(
                 "Node color: green = top-third P&L under this scenario, orange = "
                 "middle third, red = bottom third (same tri-tier convention a ranked "
-                "list would use). Node size ∝ portfolio weight. Edge color: diverging "
-                "RdBu gradient by correlation strength (red = positive, blue = "
-                "negative/hedge-like) — hover an edge for its exact correlation. "
-                "Thick solid edges = Minimum Spanning Tree (always drawn, guarantees "
-                "connectivity). Thin dotted edges = additional pairs clearing the "
-                "threshold above."
+                "list would use). Node size ∝ portfolio weight. Edge color: full "
+                "Turbo gradient by correlation strength (purple/blue = -1, green = 0, "
+                "orange/red = +1 — see the colorbar) — hover an edge for its exact "
+                "correlation. All edges are solid; thick = Minimum Spanning Tree "
+                "(always drawn, guarantees connectivity), thin = additional pairs "
+                "clearing the threshold above."
             )
 
     st.markdown("---")
@@ -1619,13 +1638,14 @@ with tab5:
         st.caption(
             "Every sector pair is shown (a complete graph, not a Minimum "
             "Spanning Tree) — with only a handful of sectors, all pairwise "
-            "correlations fit legibly. Edge color: diverging RdBu gradient by "
-            "correlation strength (red = positive, blue = negative/"
-            "hedge-like) — hover an edge for its exact correlation. Node size "
-            "∝ portfolio weight aggregated to that sector. Compare the two "
-            "panels — tighter, more red (positive-correlated) edges under "
-            "crisis vs. calm is the regime-conditioning effect this overlay "
-            "is meant to surface, unless a warning above says otherwise."
+            "correlations fit legibly. Edge color: full Turbo gradient by "
+            "correlation strength (purple/blue = -1, green = 0, orange/red = "
+            "+1 — see the colorbar) — hover an edge for its exact correlation. "
+            "All edges are solid. Node size ∝ portfolio weight aggregated to "
+            "that sector. Compare the two panels — tighter, more orange/red "
+            "(positive-correlated) edges under crisis vs. calm is the "
+            "regime-conditioning effect this overlay is meant to surface, "
+            "unless a warning above says otherwise."
         )
 
 

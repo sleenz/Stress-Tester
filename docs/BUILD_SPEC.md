@@ -357,6 +357,32 @@ on both calm and crisis panels (vs. the previous 2-edge MST), and richer
 red/orange/blue gradient shades visibly replacing the old flat
 coral/steelblue on both 7a and 7b.
 
+**Second refinement round (direct user request, done) — the RdBu_r
+gradient above was itself superseded:**
+1. **No dashed/dotted lines anywhere.** Every edge (7a and 7b) is now a
+   normal solid line. The MST-vs-additional-threshold-edge distinction in
+   7a is now carried by line width alone (thick vs thin), not dash style.
+2. **Turbo instead of RdBu_r.** A diverging red-white-blue scale washes
+   out to near-white right around correlation ≈ 0 — exactly the range a
+   lot of real correlations fall in — making weak correlations hard to
+   tell apart from each other. Turbo (`plotly.colors.sample_colorscale`)
+   stays vivid across the entire `[-1, 1]` range: dark purple/blue (-1) →
+   cyan → green (~0) → yellow/orange → dark red (+1) — every value is
+   visually distinguishable, not just the extremes.
+3. **Visible colorbar legend, range -1 to +1.** Added via a dedicated
+   invisible marker trace whose `marker.colorscale`/`cmin`/`cmax`/
+   `colorbar` are set (Plotly's standard technique for attaching a
+   colorbar to a figure built from individually-colored line traces,
+   which can't carry a colorbar themselves). Labeled "Correlation (ρ)"
+   with tick marks at -1, -0.5, 0, 0.5, 1 — the real range for a
+   correlation coefficient, not an arbitrary 0-1 scale.
+
+Verified: py_compile clean, pytest 17/17, live Playwright confirmed all
+three on both 7a and 7b — every edge solid (no dashing), a visible
+colorbar reading -1 to +1 next to each chart, and vivid, clearly
+distinguishable Turbo colors even for near-zero correlations that
+previously rendered as barely-visible pale lines under RdBu_r.
+
 ---
 
 **Delivery note:** save this file at the repo root (or `docs/`) and
