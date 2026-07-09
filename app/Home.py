@@ -63,11 +63,13 @@ with col1:
     st.markdown("### Welcome")
     st.markdown("""
     This application stress-tests a portfolio against historical crises,
-    sector-level shocks, and macroeconomic contagion scenarios. Navigate
-    through the pages using the sidebar to:
+    sector-level shocks, and macroeconomic contagion scenarios, with a
+    baseline risk dashboard alongside. Navigate through the pages using
+    the sidebar to:
 
     1. **Input** your portfolio holdings or tickers
     2. **Stress test** under historical, sector, and macro scenarios
+    3. **Analyze** baseline risk — VaR, drawdowns, correlations, volatility
     """)
 
 with col2:
@@ -79,7 +81,9 @@ with col2:
 
     **Step 3:** Go to *Stress Testing* and choose a scenario tab
 
-    **Step 4:** Review portfolio impact, P&L, and hedging effectiveness
+    **Step 4:** Check *Risk Analytics* for VaR/Sharpe/drawdown context
+
+    **Step 5:** Review portfolio impact, P&L, and hedging effectiveness
     """)
 
 st.markdown("---")
@@ -112,6 +116,13 @@ with col3:
     - Trading Economics / FRED / yfinance macro factors
     - Monte Carlo simulation (GBM, bootstrap, Student-t, jump-diffusion)
     """)
+
+st.markdown("#### Risk Analytics")
+st.markdown("""
+- VaR/CVaR (historical, parametric, Cornish-Fisher), GARCH, drawdown family
+- Sharpe/Sortino/Calmar/Omega, tail risk (Jarque-Bera, QQ plot)
+- Risk contribution, hedge classification, Effective Number of Bets via PCA
+""")
 
 st.markdown("---")
 

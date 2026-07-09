@@ -2,8 +2,10 @@
 
 > This is the current, revised spec (Phase 1 revised to keep `src/risk/{metrics,var,garch}.py`
 > and a minimal slice of `src/portfolio_builder/` dormant rather than deleted, and to add
-> Phase 6/Phase 7 fast-follows). Referenced from `CLAUDE.md`. Phase 0 and Phase 1 are complete
-> as of this version; see git history / PR description for the phase-by-phase handoff notes.
+> Phase 6/Phase 7 fast-follows). Referenced from `CLAUDE.md`. Status as of this version:
+> Phase 0, 1, 3 done; Phase 2 skipped by explicit user directive (still outstanding); Phase 4
+> and 5 skipped by explicit user directive, out of sequence, to prioritize Phase 6; Phase 6
+> done. See git history / PR description for the phase-by-phase handoff notes.
 
 ## Context (read once, don't re-derive)
 Forked from PortfolioOptimizer to ship a scoped stress-testing product for
@@ -142,7 +144,7 @@ delete anything until I confirm it's accurate.
 **CHECK + smoke test (Rule 2):** fresh process, both retained pages import
 and load without error, app boots end to end with a real test portfolio.
 
-## PHASE 2 — Fix the known launch blockers
+## PHASE 2 — Fix the known launch blockers — SKIPPED (explicit user directive; still outstanding)
 Each of these was previously observed in actual runtime logs, not inferred
 from docs — reproduce and confirm root cause before fixing, don't assume
 the prior diagnosis without checking it against current code:
@@ -162,7 +164,7 @@ the prior diagnosis without checking it against current code:
 rerun proving the failure mode no longer occurs — not a description of
 the fix.
 
-## PHASE 3 — Code-accuracy cleanup within the trimmed scope
+## PHASE 3 — Code-accuracy cleanup within the trimmed scope — DONE
 1. Fix `sector_beta.py`'s docstring on
    `compute_stock_betas_vs_portfolio_sectors()` — it claims to be the path
    `SectorStressEngine.fit()` uses; it isn't
@@ -178,7 +180,7 @@ the fix.
 **CHECK:** grep-verified zero dangling references; both renamed
 collections still resolve correctly where used.
 
-## PHASE 4 — Production hardening
+## PHASE 4 — Production hardening — SKIPPED (explicit user directive, out of sequence; still outstanding)
 1. Confirm no API keys or secrets are committed; `.env.example` reflects
    only what this trimmed scope actually needs.
 2. Add/confirm explicit logging at each of `sector_stress.py`'s four
@@ -193,7 +195,7 @@ collections still resolve correctly where used.
 
 **CHECK:** test suite run with actual pasted output.
 
-## PHASE 5 — Deploy
+## PHASE 5 — Deploy — SKIPPED (explicit user directive, out of sequence; still outstanding)
 1. Two-page nav only (Portfolio Input, Stress Testing) — no
    `st.navigation()` sectioning needed at this size, don't over-build it.
 2. Deploy to Streamlit Community Cloud from the fork.
@@ -203,7 +205,7 @@ collections still resolve correctly where used.
 **CHECK:** deployed URL loads clean; all three stress engines produce
 results for a real multi-ticker IDX+US portfolio.
 
-## PHASE 6 (optional, not required for v1) — Risk Analytics fast-follow
+## PHASE 6 (optional, not required for v1) — Risk Analytics fast-follow — DONE
 Only start after Phase 5 ships. Rewires `3_Risk_Analytics.py` against
 `src/risk/metrics.py` / `var.py` / `garch.py`, which Phase 1 left in place
 dormant rather than deleted — for baseline VaR/Sharpe context alongside
