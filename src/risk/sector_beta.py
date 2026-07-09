@@ -724,8 +724,15 @@ class SectorBetaAnalyzer:
         Estimate each stock's beta to its own sector's return series.
 
         Uses sector_returns already built by build_sector_returns() — no
-        external data download required. This is the primary stock-beta path
-        used by SectorStressEngine.fit().
+        external data download required.
+
+        NOT called by SectorStressEngine.fit() or anywhere else in this
+        codebase (grep-verified) — the per-stock betas actually used for
+        P&L there come from compute_all_stock_betas() in
+        stock_sector_beta.py (sector-ETF OLS with circularity correction
+        for dominant holdings, not this portfolio-internal-sector-return
+        regression). Kept for standalone/future use; don't assume it's on
+        the production path.
 
         OLS: beta_i = cov(stock_i, sector_i) / var(sector_i)
         where sector_i is the equal-weighted (or value-weighted) sector return

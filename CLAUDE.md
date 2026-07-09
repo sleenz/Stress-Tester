@@ -34,9 +34,9 @@ Optimization, Portfolio Builder (ranking/correlation-network), Factor Analysis, 
 ## Known placeholders — do not mistake these for real, load-bearing values
 
 - **`src/data/lseg_sectors.py::IDX_SECTOR_OVERRIDES["TLKM.JK"]`**: applied unconditionally in code, but carries an inline `# Confirm vs LSEG assignment` comment — i.e. shipped before the override was actually confirmed correct. Given IDX names are core to this product, this is `docs/BUILD_SPEC.md` Phase 2 item 3 — confirm or correct before relying on it.
-- **`src/risk/sector_beta.py::compute_stock_betas_vs_portfolio_sectors()`'s own docstring** claims to be "the primary stock-beta path used by `SectorStressEngine.fit()`" — this is stale/inaccurate; production actually uses `compute_all_stock_betas()` from `src/risk/stock_sector_beta.py`. Don't repeat the docstring's claim (fix pending, `docs/BUILD_SPEC.md` Phase 3 item 1).
-- **`scenarios.py::HISTORICAL_SCENARIOS` and `historical_scenarios.py`'s scenario list share the same name** — a naming collision, both are live and used for different things (legacy uniform-shock vs. actual per-stock returns). Rename pending, `docs/BUILD_SPEC.md` Phase 3 item 2 — don't delete either.
-- **`sector_stress.py` reporting `converged=False` for a fit `dcc_garch.py` logged as `converged=True`** — a known, not-yet-fixed bookkeeping bug. `docs/BUILD_SPEC.md` Phase 2 item 1.
+- **`src/risk/sector_beta.py::compute_stock_betas_vs_portfolio_sectors()` is NOT on `SectorStressEngine.fit()`'s path** — grep-verified: it's called nowhere in the codebase outside its own definition. Its docstring used to claim otherwise (fixed, `docs/BUILD_SPEC.md` Phase 3 item 1); the real per-stock-beta path is `compute_all_stock_betas()` in `src/risk/stock_sector_beta.py`.
+- **`scenarios.py`'s legacy uniform-shock dict is `UNIFORM_SHOCK_SCENARIOS`; `historical_scenarios.py`'s actual-per-stock-returns list is `PER_STOCK_CRISIS_SCENARIOS`** — previously both were named `HISTORICAL_SCENARIOS` (a naming collision fixed in `docs/BUILD_SPEC.md` Phase 3 item 2). Both are still live and used for different things — don't conflate them.
+- **`sector_stress.py` reporting `converged=False` for a fit `dcc_garch.py` logged as `converged=True`** — a known, not-yet-fixed bookkeeping bug. `docs/BUILD_SPEC.md` Phase 2 item 1 — deferred, not yet addressed in this fork.
 
 ## Absolute constraints
 

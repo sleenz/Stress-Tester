@@ -10,12 +10,11 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.simulation.scenarios import StressTester, HISTORICAL_SCENARIOS, list_scenarios
+from src.simulation.scenarios import StressTester, UNIFORM_SHOCK_SCENARIOS, list_scenarios
 from src.simulation.monte_carlo import MonteCarloSimulator
 from src.simulation.historical_scenarios import (
     HistoricalStressor,
     HistoricalStressorConfig,
-    HISTORICAL_SCENARIOS as NEW_HISTORICAL_SCENARIOS,
 )
 # st.session_state.historical_actual_results  dict[str, HistoricalScenarioResult]
 from src.simulation.sector_stress import (
@@ -190,12 +189,12 @@ with tab1:
 
     scenario_key = st.selectbox(
         "Select Scenario",
-        list(HISTORICAL_SCENARIOS.keys()),
-        format_func=lambda x: HISTORICAL_SCENARIOS[x]['name']
+        list(UNIFORM_SHOCK_SCENARIOS.keys()),
+        format_func=lambda x: UNIFORM_SHOCK_SCENARIOS[x]['name']
     )
 
     if scenario_key:
-        scenario = HISTORICAL_SCENARIOS[scenario_key]
+        scenario = UNIFORM_SHOCK_SCENARIOS[scenario_key]
         col1, col2 = st.columns(2)
 
         with col1:
@@ -1296,7 +1295,7 @@ if st.button("Analyse Hedging Effectiveness", key="hedge_stress_btn"):
         nonoverlap_names: list = []
         _scenario_data: list   = []
 
-        for _sk, _sv in HISTORICAL_SCENARIOS.items():
+        for _sk, _sv in UNIFORM_SHOCK_SCENARIOS.items():
             try:
                 scen_start = pd.Timestamp(_sv["start_date"])
                 scen_end   = pd.Timestamp(_sv["end_date"])
@@ -1359,7 +1358,7 @@ if st.button("Analyse Hedging Effectiveness", key="hedge_stress_btn"):
         # One st.info message explaining source — not a warning, not an error
         if nonoverlap_names:
             n_missing = len(nonoverlap_names)
-            n_total   = len(HISTORICAL_SCENARIOS)
+            n_total   = len(UNIFORM_SHOCK_SCENARIOS)
             st.info(
                 f"**Stress-period beta:** {n_total - n_missing} of {n_total} historical "
                 f"scenarios fall within your data window "

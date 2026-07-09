@@ -73,10 +73,10 @@ if 'preset_pending_confirm' not in st.session_state:
 def _load_preset_and_populate_holdings(preset: dict) -> list:
     """
     Load a preset's saved (tickers, weights, value) via the existing
-    apply_preset_to_state() — unchanged, since other pages (Optimization,
-    Risk Analytics, etc.) read st.session_state.weights/portfolio_value
-    directly and must keep seeing them populated the same way — AND
-    additionally derive a per-ticker SHARE count into current_holdings
+    apply_preset_to_state() — unchanged, since this page's own Presets tab
+    (_current_portfolio_state() below) reads st.session_state.weights/
+    portfolio_value directly and must keep seeing them populated the same
+    way — AND additionally derive a per-ticker SHARE count into current_holdings
     (shares = weight * portfolio_value / current_price), so the preset
     shows up in the My Current Holdings tab as editable positions instead
     of only pre-filling Manual Ticker Entry's raw ticker list.
@@ -378,20 +378,14 @@ with tab1:
                     st.session_state.current_portfolio_weights = current_weights
                     st.session_state.settings['total_capital'] = total_value
 
-                    # Store for other analysis pages
-                    st.session_state.optimizer = None  # Will be created in optimization
+                    # Store for the Stress Testing page
                     st.session_state.weights = current_weights  # Current weights as starting point
                     st.session_state.prices = prices
                     st.session_state.portfolio_value = total_value
 
                     st.success(f"Portfolio analyzed! Total value: ${total_value:,.2f}")
                     st.info("Your portfolio data is ready. You can now access:")
-                    st.write("- **Optimization**: See rebalancing recommendations")
-                    st.write("- **Risk Analytics**: Analyze VaR, CVaR, drawdowns")
-                    st.write("- **Stress Testing**: Test portfolio under scenarios")
-                    st.write("- **Monitoring**: Track portfolio performance")
-                    st.write("- **Factor Analysis**: Analyze factor exposures")
-                    st.write("- **Reports**: Generate comprehensive reports")
+                    st.write("- **Stress Testing**: Test portfolio under historical, sector, and macro scenarios")
 
             except Exception as e:
                 st.error(f"Error fetching data: {e}")
@@ -514,7 +508,7 @@ with tab2:
                     st.session_state.current_portfolio_weights = None  # No current holdings
 
                     st.success(f"Successfully loaded data for {len(prices.columns)} tickers!")
-                    st.info("Go to **Optimization** page to calculate optimal portfolio.")
+                    st.info("Go to **Stress Testing** to test this portfolio under historical, sector, and macro scenarios.")
 
             except Exception as e:
                 st.error(f"Error fetching data: {e}")
@@ -550,8 +544,8 @@ with tab3:
 
     def _current_portfolio_state():
         """Read the live portfolio input (tickers, weights, value) from the same
-        session_state keys the My Current Holdings / Manual Ticker Entry /
-        Optimization widgets already use, for saving AS a preset."""
+        session_state keys the My Current Holdings / Manual Ticker Entry
+        widgets already use, for saving AS a preset."""
         weights_obj = st.session_state.get('weights')
         if weights_obj is not None:
             tickers = [str(t) for t in weights_obj.index]
@@ -789,12 +783,6 @@ with tab3:
                     st.rerun()
 
 st.markdown("---")
-
-st.caption(
-    "Investment parameters (capital, method, risk-free rate) and constraints "
-    "now live on the **Optimization** page, alongside the position reduction "
-    "constraint — everything the optimizer needs is in one place there."
-)
 
 if st.button("Save Holdings", key="save_settings_p1"):
     current = load_settings()

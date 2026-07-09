@@ -268,10 +268,11 @@ class NetworkStyleConfig:
     visually prominent (in fully-saturated hedge color) as an equally strong
     positive correlation is in fully-saturated positive color, not a faded
     afterthought. Color tokens below are the app's existing palette
-    (edge_color_positive/negative are hex equivalents of
-    app/pages/2_Optimization.py's "coral"/"steelblue"; node tier colors
-    reuse app/pages/4_Stress_Testing.py's low/warning/critical
-    green/orange/red), not new colors invented for this feature.
+    (edge_color_positive/negative are hex equivalents of the original
+    PortfolioOptimizer's "coral"/"steelblue" convention, from the since-
+    removed Optimization page; node tier colors reuse the Stress Testing
+    page's low/warning/critical green/orange/red), not new colors invented
+    for this feature.
     """
     edge_opacity: float = 1.0
     edge_color_positive: str = "#ff7f50"  # "coral", as a hex triplet so it can be gradient-interpolated

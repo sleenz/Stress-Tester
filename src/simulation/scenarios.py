@@ -9,7 +9,6 @@ from ..utils.logger import get_logger
 from src.simulation.historical_scenarios import (
     HistoricalStressor,
     HistoricalStressorConfig,
-    HISTORICAL_SCENARIOS as NEW_HISTORICAL_SCENARIOS,
     HistoricalScenarioResult,
 )
 
@@ -17,7 +16,7 @@ logger = get_logger(__name__)
 
 
 # Historical stress scenarios with date ranges and characteristics
-HISTORICAL_SCENARIOS = {
+UNIFORM_SHOCK_SCENARIOS = {
     '2008_financial_crisis': {
         'name': '2008 Financial Crisis',
         'start_date': '2008-09-01',
@@ -185,16 +184,16 @@ class StressTester:
         Apply historical stress scenario.
 
         Args:
-            scenario_key: Key from HISTORICAL_SCENARIOS
+            scenario_key: Key from UNIFORM_SHOCK_SCENARIOS
             historical_data: Historical price/return data covering scenario period
 
         Returns:
             Stress test results
         """
-        if scenario_key not in HISTORICAL_SCENARIOS:
+        if scenario_key not in UNIFORM_SHOCK_SCENARIOS:
             raise ValueError(f"Unknown scenario: {scenario_key}")
 
-        scenario = HISTORICAL_SCENARIOS[scenario_key]
+        scenario = UNIFORM_SHOCK_SCENARIOS[scenario_key]
 
         if historical_data is not None:
             # Use actual historical data
@@ -297,7 +296,7 @@ class StressTester:
         """
         results = []
 
-        for scenario_key in HISTORICAL_SCENARIOS.keys():
+        for scenario_key in UNIFORM_SHOCK_SCENARIOS.keys():
             try:
                 result = self.historical_scenario(scenario_key, historical_data)
                 results.append({
@@ -331,7 +330,7 @@ class StressTester:
             Index = tickers, values = decimal weights summing to 1.
         portfolio_value : float
         scenarios : list[HistoricalScenario], optional
-            If None, uses HISTORICAL_SCENARIOS from historical_scenarios.py.
+            If None, uses UNIFORM_SHOCK_SCENARIOS from historical_scenarios.py.
         config : HistoricalStressorConfig, optional
             If None, uses defaults.
 
@@ -554,7 +553,7 @@ def list_scenarios() -> Dict[str, str]:
     scenarios = {}
 
     # Historical
-    for key, scenario in HISTORICAL_SCENARIOS.items():
+    for key, scenario in UNIFORM_SHOCK_SCENARIOS.items():
         scenarios[key] = f"[Historical] {scenario['description']}"
 
     # Custom
