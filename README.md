@@ -1,10 +1,12 @@
-# PortfolioOptimizer
+# Bahana Stress Tester
 
-An advanced quantitative portfolio optimization and risk management system with a Streamlit web interface. Provides institutional-grade tools for portfolio construction, risk analytics, stress testing, factor analysis, stock valuation, and PDF reporting — with meaningful support for both US equities and the Indonesian market (IDX, `.JK` tickers).
+A scoped fork of PortfolioOptimizer, built for Bahana TCW: **Portfolio Input + Stress Testing only.** Multi-source price ingestion, historical crisis replay, DCC-GARCH/Student-t-copula/HMM-regime sector shock propagation, and Leontief macro contagion — with meaningful support for both US equities and the Indonesian market (IDX, `.JK` tickers).
+
+Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics (VaR/Sharpe/GARCH) is a documented Phase 6 fast-follow, not required for v1 — its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) are kept in the tree, unimported by any active page, rather than deleted. `src/portfolio_builder/cache.py` and `network.py` are likewise kept dormant for a Phase 7 correlation-network companion view on the Stress Testing page.
 
 > **Disclaimer:** This tool is a calculation-assistance aid. It is not intended as the sole basis for financial decisions. Always do your own research (DYOR).
 
-For internals — module-by-module design detail, formulas, and the reasoning behind non-obvious choices — see [`docs/architecture.md`](docs/architecture.md). That document (and its companion [`CLAUDE.md`](CLAUDE.md)) is aimed at whoever is next modifying the code; this README is aimed at getting the app running.
+For internals — module-by-module design detail, formulas, and the reasoning behind non-obvious choices — see [`docs/architecture.md`](docs/architecture.md). That document (and its companion [`CLAUDE.md`](CLAUDE.md)) is aimed at whoever is next modifying the code; this README is aimed at getting the app running. The build/production-readiness plan this fork is being executed against lives at [`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md).
 
 ---
 
@@ -24,6 +26,8 @@ yfinance (the primary data source) works without any key. The other sources are 
 
 ### 2. Install dependencies
 
+Python 3.11 or 3.12 required (pinned in `runtime.txt` — `hmmlearn`'s wheel availability on Streamlit Community Cloud is the reason; the Sector Shock stress test's HMM regime-conditioning does not run without it).
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -34,6 +38,14 @@ pip install -r requirements.txt
 streamlit run app/Home.py
 ```
 
+### Lint / test
+
+```bash
+pytest tests/ -v
+```
+
+No separate lint config is checked in; `python -m py_compile $(git ls-files '*.py')` is the minimum sanity check before committing.
+
 ---
 
 ## Features
@@ -41,72 +53,48 @@ streamlit run app/Home.py
 | Capability | Description |
 |---|---|
 | Data Ingestion | Multi-source fallback: yfinance → Alpha Vantage → Twelve Data → FMP, with disk caching |
-| Portfolio Optimization | 7 algorithms: Max Sharpe, Min Vol, Risk Parity, HRP, Max Diversification, Max Return, Equal Weight |
-| Black-Litterman | Market-equilibrium prior + investor views (absolute/relative), Bayesian posterior |
-| Risk Analytics | VaR/CVaR (historical, parametric, Cornish-Fisher), GARCH, drawdown family, Sharpe/Sortino/Calmar/Omega |
-| Deep Risk Analysis | Tail risk (Jarque-Bera, QQ plot), Monte Carlo VaR, component/marginal VaR, Effective Number of Bets via PCA |
-| Hedging Effectiveness | Beta classification, risk contribution decomposition, diversification benefit waterfall |
+| Portfolio Input | Holdings entry (tickers + shares) or manual ticker list; diversity metrics (HHI, Gini, effective stocks); Presets tab (save/load/rename named portfolio snapshots) |
 | Historical Stress Testing | 7 crisis scenarios replayed with actual per-stock returns; beta-scaled proxy for stocks that predate the event |
 | Sector Shock Stress Test | Per-stock sector-relative beta (ETF OLS with circularity correction); DCC-GARCH dynamic correlations; Student-t copula tail dependence; HMM regime-conditioned correlation selection |
 | Macro Contagion Stress Test | Leontief input-output contagion model; macro sensitivity matrix (Trading Economics/FRED/yfinance); spectral-radius cascade risk |
 | Monte Carlo Simulation | 4 methods: GBM, block bootstrap, Student-t, jump-diffusion |
-| Factor Analysis | Fama-French 3/5-factor, style factors (momentum/value/quality/low-vol/size), Brinson attribution |
-| Portfolio Tracking | Holdings entry (tickers + shares) or manual ticker list; diversity metrics (HHI, Gini, effective stocks) |
-| Portfolio Presets | Save/load/rename named portfolio snapshots; loading a preset populates editable holdings at current market prices |
-| Portfolio Builder | Sector-neutral 4-factor ranking, correlation network (MST) with semantic zoom, HHI/diversification + period-matched Sharpe |
-| Rebalancing | Drift detection, trade recommendations with share counts, DCA scheduler |
-| Reporting | PDF generation with 6 chart types and 3 report templates |
-| Stock Valuation | Standalone 3-stage pipeline: Magic Formula screen → Multi-Factor Score → Reverse DCF |
+| Hedging Effectiveness | Beta classification against portfolio returns, stress-period vs. full-period fallback, hedge-effectiveness scoring |
 
 ---
 
 ## Repository Layout
 
 ```
-PortfolioOptimizer/
+Stress-Tester/
 |
 +-- app/                                  # Streamlit multi-page application
 |   +-- Home.py                           # Landing page, session state init
 |   +-- pages/
 |       +-- 1_Portfolio_Input.py          # Holdings entry, manual tickers, and Presets (3 tabs)
-|       +-- 2_Optimization.py             # Optimization + rebalancing UI
-|       +-- 3_Risk_Analytics.py           # Risk dashboard + deep analysis
-|       +-- 4_Stress_Testing.py           # Historical, Sector Shock, Macro Contagion
-|       +-- 5_Monitoring.py               # Rebalancing + attribution + DCA
-|       +-- 6_Factor_Analysis.py          # FF factors + style + decomposition
-|       +-- 7_Reports.py                  # PDF report generation UI
-|       +-- 8_Stock_Valuation.py          # Magic Formula / multi-factor / reverse DCF UI
-|       +-- 10_Portfolio_Builder.py       # Sector-neutral ranking + correlation network
+|       +-- 2_Stress_Testing.py           # Historical, Sector Shock, Macro Contagion, Monte Carlo
 |
 +-- src/                                  # Core library
-|   +-- portfolio_builder/                # Ranking, correlation network, metrics (see docs/architecture.md)
 |   +-- data/                             # Multi-source fetch, cache, sector/macro data
-|   +-- optimization/                     # PortfolioOptimizer, HRP, Black-Litterman, constraints
-|   +-- risk/                             # RiskMetrics, VaR, GARCH/DCC-GARCH, copula, regimes, contagion
+|   +-- risk/                             # DCC-GARCH, copula, regime detection, sector/stock beta, contagion, macro sensitivity
+|   |                                     # metrics.py / var.py / garch.py kept but DORMANT — Phase 6, not imported by any page
 |   +-- simulation/                       # Monte Carlo, historical/sector/macro stress engines
-|   +-- valuation/                        # stock_valuer.py — 3-stage valuation pipeline
-|   +-- factors/                          # Fama-French, style factors, attribution
-|   +-- portfolio/                        # Holdings tracking, rebalancing, DCA, attribution
-|   +-- reports/                          # PDF generation
+|   +-- portfolio/                        # holdings.py only — calculator.py/rebalancer.py removed (Optimization/Monitoring out of scope)
+|   +-- portfolio_builder/                # cache.py / network.py kept but DORMANT — Phase 7 correlation-network companion view
 |   +-- utils/                            # Presets, settings, logging, helpers
 |
-+-- tests/                                # pytest suite (optimization constraints, presets, sector beta, ...)
++-- tests/                                # pytest suite (preset manager, stock-sector beta)
 +-- docs/architecture.md                  # Full module-by-module design detail
++-- docs/BUILD_SPEC.md                    # This fork's phased build/production-readiness plan
 +-- CLAUDE.md                             # AI-agent-facing index (load-bearing decisions, known placeholders)
-+-- requirements.txt                      # Python dependencies
++-- requirements.txt                      # Python dependencies (trimmed to retained scope)
++-- runtime.txt                           # Pinned Python version (3.11.9)
 +-- .env.example                          # API key template
 +-- README.md                             # This file
 ```
 
-Most `src/` modules also ship a runnable smoke test behind `if __name__ == "__main__":` (e.g. `python -m src.portfolio_builder.ranking`) in addition to, or instead of, `pytest` coverage under `tests/` — see `docs/architecture.md` for which modules use which.
+Removed entirely (not dormant): `src/optimization/`, `src/factors/`, `src/reports/`, `src/valuation/`, `src/portfolio/calculator.py`, `src/portfolio/rebalancer.py`, `src/portfolio_builder/{fetch,ranking,metrics,heat_color,ff5_overlay}.py`, and the seven out-of-scope pages (`2_Optimization.py`, `3_Risk_Analytics.py`, `5_Monitoring.py`, `6_Factor_Analysis.py`, `7_Reports.py`, `8_Stock_Valuation.py`, `10_Portfolio_Builder.py`).
 
----
-
-## Known Issues
-
-| Severity | Location | Issue |
-|---|---|---|
-| Low | `app/pages/3_Risk_Analytics.py` (EWMA Volatility panel) | Plots `(returns*weights).sum(axis=1).rolling(20).std()` instead of the computed `ewma_vol` series it fetches just above. Cosmetic mislabel only — the correct series is fetched, just not the one plotted. |
+If you're importing from `src/risk/` or `src/portfolio_builder/` and hit something unexpected: check whether the module you want is one of the dormant ones above before assuming it's dead code — it's kept in place on purpose for a documented fast-follow phase, not an oversight.
 
 ---
 

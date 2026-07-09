@@ -5,29 +5,29 @@ scipy>=1.10.0
 
 # Financial Data
 yfinance>=0.2.40
-alpha_vantage>=2.3.1
 pandas_datareader>=0.10.0
 requests>=2.31.0
 
-# Risk & Volatility
+# Risk & Volatility (DCC-GARCH, Student-t copula, HMM regime detection)
 arch>=6.3.0
 hmmlearn>=0.3.3
 
 # Optional: LSEG Data Library (required for TRBC sector lookups; yfinance fallback used otherwise)
 # lseg-data>=2.0.0
 
-# Machine Learning
+# Machine Learning (macro sensitivity regression, contagion network, stock-sector beta OLS)
 scikit-learn>=1.3.0
 statsmodels>=0.14.0
 
 # Visualization
 plotly>=5.18.0
-matplotlib>=3.7.0
-seaborn>=0.13.0
+matplotlib>=3.7.0  # not imported directly anywhere in this scope, but pandas' Styler.background_gradient()
+                    # (used 3x in 2_Stress_Testing.py) requires it at call time — found by the Phase 1
+                    # smoke test (ImportError only surfaces when that code path actually runs), not by
+                    # static import grep, since it's pandas' own internal dependency, not ours.
 
 # Web Interface
 streamlit>=1.31.0
-streamlit-aggrid>=0.3.4
 
 # Utilities
 python-dotenv>=1.0.0
@@ -35,8 +35,6 @@ tenacity>=8.2.3
 loguru>=0.7.0
 joblib>=1.3.0
 tqdm>=4.66.0
-tabulate>=0.9.0
-rich>=13.0.0
 networkx>=3.0
 fredapi>=0.5.0
 tradingeconomics>=0.3.0
@@ -44,6 +42,3 @@ tradingeconomics>=0.3.0
 # Testing
 pytest>=7.4.0
 pytest-cov>=4.1.0
-
-# PDF Report Generation
-reportlab>=4.0.0
