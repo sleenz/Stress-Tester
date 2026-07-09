@@ -2,7 +2,7 @@
 
 A scoped fork of PortfolioOptimizer, built for Bahana TCW: **Portfolio Input + Stress Testing + Risk Analytics.** Multi-source price ingestion, historical crisis replay, DCC-GARCH/Student-t-copula/HMM-regime sector shock propagation, Leontief macro contagion, and a baseline VaR/Sharpe/GARCH risk dashboard — with meaningful support for both US equities and the Indonesian market (IDX, `.JK` tickers).
 
-Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics was originally a documented Phase 6 fast-follow with its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) kept dormant in the tree rather than deleted — Phase 6 has since restored `3_Risk_Analytics.py` against them, so they're active now, not dormant. `src/portfolio_builder/cache.py` and `network.py` are still kept dormant for a Phase 7 correlation-network companion view on the Stress Testing page.
+Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics was originally a documented Phase 6 fast-follow with its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) kept dormant in the tree rather than deleted — Phase 6 has since restored `3_Risk_Analytics.py` against them, so they're active now, not dormant. `src/portfolio_builder/network.py` is likewise now active (Phase 7a) as a Correlation Network tab on Stress Testing, colored by real per-ticker P&L from a selected Historical or Sector Shock scenario — Macro Contagion is deliberately not offered as a P&L source there (see CLAUDE.md for why). Phase 7b (a regime-correlation overlay stretch goal) has not been attempted.
 
 > **Disclaimer:** This tool is a calculation-assistance aid. It is not intended as the sole basis for financial decisions. Always do your own research (DYOR).
 
@@ -61,6 +61,7 @@ No separate lint config is checked in; `python -m py_compile $(git ls-files '*.p
 | Hedging Effectiveness | Beta classification against portfolio returns, stress-period vs. full-period fallback, hedge-effectiveness scoring |
 | Risk Analytics | VaR/CVaR (historical, parametric, Cornish-Fisher), GARCH/EWMA volatility, drawdown family, Sharpe/Sortino/Calmar/Omega |
 | Deep Risk Analysis | Tail risk (Jarque-Bera, QQ plot), Monte Carlo VaR, component/marginal VaR, Effective Number of Bets via PCA |
+| Correlation Network | Ticker-level Minimum Spanning Tree, colored by real per-ticker P&L from a selected Historical or Sector Shock scenario; edge color by correlation strength |
 
 ---
 
@@ -73,7 +74,7 @@ Stress-Tester/
 |   +-- Home.py                           # Landing page, session state init
 |   +-- pages/
 |       +-- 1_Portfolio_Input.py          # Holdings entry, manual tickers, and Presets (3 tabs)
-|       +-- 2_Stress_Testing.py           # Historical, Sector Shock, Macro Contagion, Monte Carlo
+|       +-- 2_Stress_Testing.py           # Historical, Sector Shock, Macro Contagion, Monte Carlo, Correlation Network
 |       +-- 3_Risk_Analytics.py           # VaR/CVaR, drawdowns, correlations, volatility, tail risk, PCA (Phase 6)
 |
 +-- src/                                  # Core library
@@ -82,7 +83,9 @@ Stress-Tester/
 |   |                                     # metrics.py / var.py / garch.py — used by 3_Risk_Analytics.py (Phase 6)
 |   +-- simulation/                       # Monte Carlo, historical/sector/macro stress engines
 |   +-- portfolio/                        # holdings.py only — calculator.py/rebalancer.py removed (Optimization/Monitoring out of scope)
-|   +-- portfolio_builder/                # cache.py / network.py kept but DORMANT — Phase 7 correlation-network companion view
+|   +-- portfolio_builder/                # network.py — used by Stress Testing's Correlation Network tab (Phase 7a)
+|   |                                     # cache.py stays dormant (network.py's build_semantic_zoom_network()/
+|   |                                     # build_correlation_matrix() need it, but Phase 7a's tab doesn't call those)
 |   +-- utils/                            # Presets, settings, logging, helpers
 |
 +-- tests/                                # pytest suite (preset manager, stock-sector beta)
@@ -97,7 +100,7 @@ Stress-Tester/
 
 Removed entirely (not dormant): `src/optimization/`, `src/factors/`, `src/reports/`, `src/valuation/`, `src/portfolio/calculator.py`, `src/portfolio/rebalancer.py`, `src/portfolio_builder/{fetch,ranking,metrics,heat_color,ff5_overlay}.py`, and six out-of-scope pages (`2_Optimization.py`, `5_Monitoring.py`, `6_Factor_Analysis.py`, `7_Reports.py`, `8_Stock_Valuation.py`, `10_Portfolio_Builder.py`). `3_Risk_Analytics.py` was deleted in the initial trim and restored in Phase 6 — it is active, not removed.
 
-If you're importing from `src/portfolio_builder/` and hit something unexpected: check whether the module you want is `cache.py`/`network.py` before assuming it's dead code — those two are kept in place on purpose for a documented Phase 7 fast-follow, not an oversight.
+If you're importing from `src/portfolio_builder/cache.py` and hit something unexpected: it's kept in place on purpose (a `network.py` type-annotation dependency), not dead code, even though nothing calls its `run_nightly_refresh()`/SQLite-cache path.
 
 ---
 

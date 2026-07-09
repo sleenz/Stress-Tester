@@ -1,11 +1,14 @@
 # Bahana Stress Tester — Fork & Production-Readiness Build Spec
 
 > This is the current, revised spec (Phase 1 revised to keep `src/risk/{metrics,var,garch}.py`
-> and a minimal slice of `src/portfolio_builder/` dormant rather than deleted, and to add
-> Phase 6/Phase 7 fast-follows). Referenced from `CLAUDE.md`. Status as of this version:
-> Phase 0, 1, 3 done; Phase 2 skipped by explicit user directive (still outstanding); Phase 4
-> and 5 skipped by explicit user directive, out of sequence, to prioritize Phase 6; Phase 6
-> done. See git history / PR description for the phase-by-phase handoff notes.
+> and a minimal slice of `src/portfolio_builder/` dormant rather than deleted, to add
+> Phase 6/Phase 7 fast-follows, and Phase 7 itself later revised mid-implementation into a
+> P&L-colored stress-testing view rather than a generic Portfolio-Builder-style network).
+> Referenced from `CLAUDE.md`. Status as of this version: Phase 0, 1, 3 done; Phase 2 skipped
+> by explicit user directive (still outstanding); Phase 4 and 5 skipped by explicit user
+> directive, out of sequence, to prioritize Phase 6 and 7; Phase 6 done; Phase 7a done, 7b
+> (stretch goal) not attempted. See git history / PR description for the phase-by-phase
+> handoff notes.
 
 ## Context (read once, don't re-derive)
 Forked from PortfolioOptimizer to ship a scoped stress-testing product for
@@ -15,8 +18,10 @@ Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock
 Valuation are OUT of scope for this fork — do not port, fix, or reference
 them beyond what's needed to cleanly remove them. Risk Analytics has since
 shipped (Phase 6, done, out of sequence ahead of Phase 4/5 per explicit
-user directive) — current scope is **Portfolio Input + Stress Testing +
-Risk Analytics**.
+user directive), and Stress Testing gained a Correlation Network tab
+(Phase 7a, done, same out-of-sequence directive) — current scope is
+**Portfolio Input + Stress Testing (incl. Correlation Network) + Risk
+Analytics**.
 
 ---
 
@@ -215,24 +220,74 @@ Phase 4/5 by explicit user directive instead. Rewires `3_Risk_Analytics.py` agai
 dormant rather than deleted — for baseline VaR/Sharpe context alongside
 stress scenario results.
 
-## PHASE 7 (optional, not required for v1) — Correlation network companion view
-Only start after Phase 5 ships, independently of Phase 6. Adds a
-correlation-network tab — most naturally on the Stress Testing page, given
-the multi-tab precedent already there (Historical/Sector Shock/Macro
-Contagion) — built from `src/portfolio_builder/network.py`, which Phase 1
-left in place dormant for exactly this. Feed it a live correlation matrix
-computed from price data Stress Testing already pulls; do not route it
-through `UniverseCache`/`fetch.py`/the SQLite cache layer — the current
-Portfolio Builder page's own cold-cache path already proves this works.
-This is a static companion view, not integrated with the stress engines'
-own correlation logic (DCC-GARCH/copula) — don't try to unify them.
+## PHASE 7 (optional, not required for v1) — Correlation network as a stress-tester view — 7a DONE, 7b NOT ATTEMPTED
+Originally planned to start only after Phase 5 shipped; 7a done ahead of
+Phase 4/5 by explicit user directive instead, independently of Phase 6.
+Revised mid-implementation (see below) from a generic Portfolio-Builder-
+style correlation network into a P&L-colored stress-testing view — two
+sub-targets, in order, the second a stretch goal not required to close
+this phase.
 
-Before wiring it in: `network.py`'s docstring justifies staying at
+**7a — P&L-colored ticker network (v1 target) — DONE.** Added a
+Correlation Network tab on the Stress Testing page (fifth tab, alongside
+Historical/Monte Carlo/Sector Shock/Macro Contagion). Reuses
+`src/portfolio_builder/network.py`'s ticker-level MST and color-gradient
+code unmodified (`compute_distance_matrix`, `build_ticker_mst`,
+`filter_edges_by_threshold`, `edge_color_for_correlation`,
+`node_color_for_percentile`) — the node-coloring input is per-ticker P&L
+for a user-selected scenario instead of the composite-ranking percentile
+`node_color_for_percentile()` was originally written for; same function,
+different input dimension. Fed a live `returns.corr()` matrix computed
+from price data Stress Testing already pulls — `UniverseCache`/
+`fetch.py`/the SQLite cache layer are bypassed entirely, not routed
+through at all.
+
+Historical and Sector Shock both produce real per-ticker P&L and are
+wired as selectable sources (`HistoricalScenarioResult.pnl_by_stock`;
+`SectorStressResult.to_dataframe()`'s `pnl_contribution_beta` column).
+Macro Contagion is excluded, not silently interpolated: audited
+`MacroStressEngine.run_stress()` and confirmed its per-ticker
+`direct`/`total` return is looked up by **sector only**
+(`contagion.h_initial.get(sector, ...)` / `contagion.leontief_total.get(sector, ...)`)
+— every ticker sharing a sector gets an identical return, scaled only by
+that ticker's own weight for the dollar P&L. Real position-sized P&L, not
+real per-ticker differentiation; coloring nodes by it would look like a
+differentiated signal that doesn't exist. Macro Contagion scenarios are
+simply never added to the tab's selectable P&L-source list (not offered
+disabled-with-a-message — there's nothing to click that could produce a
+wrong number).
+
+**CHECK (7a) result:** ran a live portfolio (AAPL, MSFT, JPM, BBCA.JK)
+through Historical Scenarios (actual-returns mode) and Sector Shock (fit
++ all 7 scenarios), then confirmed the Correlation Network tab's P&L
+source dropdown lists both a Historical and a Sector Shock entry, no
+Macro Contagion entry ever appears (confirmed both by live UI check and
+by grepping the source: `_cn_pnl_sources` is populated only from
+`historical_actual_results` and `ss_all_results`/`ss_result`), and
+switching between "Historical: COVID-19 Crash" and "Sector Shock: Tech
+Selloff" produces visibly different node colors reflecting each
+scenario's own real P&L ranking (e.g. JPM colored green under Tech
+Selloff — unaffected, top-third — while AAPL/MSFT both orange, hit by
+the sector-specific shock).
+
+Before wiring in: `network.py`'s docstring justified staying at
 ticker-level `.corr()` instead of DCC-GARCH by citing an "unresolved
-convergence-misreport issue" in `dcc_garch.py`. Architecture.md's own audit
-found that claim doesn't trace to anything in `dcc_garch.py`'s actual code.
-The ticker-level decision is still fine — leave it — but correct the
-comment so it doesn't keep citing an unverified reason.
+convergence-misreport issue" in `dcc_garch.py`. Architecture.md's own
+audit found that claim doesn't trace to anything in `dcc_garch.py`'s
+actual code — done: the docstring now describes the real mechanism (a
+hard `ConvergenceError` guard plus an explicit constant-vol fallback) and
+no longer cites the unverified reason. The ticker-level decision itself
+was always fine — only the stated justification was wrong.
+
+**7b — Regime-correlation overlay (stretch goal) — NOT ATTEMPTED.** Uses
+`network.py`'s existing sector-supernode MST mode ("semantic zoom").
+Would feed it sector-level correlation from
+`DCCGARCHModel.get_correlation_at_quantile()` or
+`MarketRegimeDetector.get_regime_correlation()` for the active scenario's
+stress/calm state, with the sub-5-observation identity-matrix fallback
+required to render a visible "insufficient regime history" warning rather
+than a normal-looking network. Deferred — explicitly optional, not
+required to close this phase; revisit as a separate follow-up if wanted.
 
 ---
 
