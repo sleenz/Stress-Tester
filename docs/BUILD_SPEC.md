@@ -322,6 +322,41 @@ both regimes had well above 5 observations); the sub-5 fallback path
 itself was verified via the synthetic test above, not by trying to coax
 a live portfolio into a data-starved regime.
 
+**Post-7b refinements (direct user request, done):**
+1. **Edge hover.** Neither 7a's nor 7b's edges actually showed their
+   correlation on hover as originally built — a Plotly `mode="lines"`
+   trace only matches hover near its plotted points (the two endpoints),
+   not along the interior of the line, so hovering the middle of an edge
+   showed nothing. Fixed by adding one invisible (`opacity=0`) marker per
+   edge at its exact midpoint, carrying the `ρ=` hover text, as a separate
+   trace layered under the node trace. Verified live: hovering the
+   AAPL-JPM edge in the ticker network shows "AAPL – JPM: ρ=0.29" exactly
+   at the edge's midpoint.
+2. **7b is now a complete graph, not an MST.** With only a handful of
+   sectors, showing every pairwise correlation directly is more
+   informative than reducing to a spanning tree. Both the calm and crisis
+   panels now render every sector pair; no more solid-vs-dotted
+   MST/non-MST distinction in that view (color alone carries strength).
+   `build_sector_mst` is no longer called by the page (network.py itself
+   is untouched, still exports it).
+3. **Gradient color palette for all correlation networks (7a and 7b).**
+   Replaced `network.py`'s 2-color coral/steelblue
+   `edge_color_for_correlation()` with a page-local `_edge_color_gradient()`
+   using `plotly.colors.sample_colorscale("RdBu_r", ...)` — the same
+   diverging colorscale already used elsewhere in this app for correlation
+   heatmaps (e.g. Sector Shock's DCC Correlation Matrix), giving a much
+   richer red↔white↔blue gradient instead of a flat 2-tone interpolation.
+   `network.py`'s own `edge_color_for_correlation()` was left unmodified
+   (unused by the page now, not deleted) rather than rewritten, consistent
+   with not touching a reviewed/merged module's function as a side effect
+   of a page-level styling change.
+
+Verified: py_compile clean, pytest 17/17, live Playwright confirmed all
+three — hover tooltip at an edge midpoint, 7b's complete 3-edge triangle
+on both calm and crisis panels (vs. the previous 2-edge MST), and richer
+red/orange/blue gradient shades visibly replacing the old flat
+coral/steelblue on both 7a and 7b.
+
 ---
 
 **Delivery note:** save this file at the repo root (or `docs/`) and

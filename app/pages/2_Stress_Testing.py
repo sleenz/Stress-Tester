@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.colors as pcolors
 import sys
 import os
 
@@ -34,9 +35,7 @@ from src.portfolio_builder.network import (
     NetworkStyleConfig,
     compute_distance_matrix,
     build_ticker_mst,
-    build_sector_mst,
     filter_edges_by_threshold,
-    edge_color_for_correlation,
     correlation_from_distance,
     node_color_for_percentile,
 )
@@ -1294,22 +1293,41 @@ with tab4:
                 st.plotly_chart(_fig_mc_cmp, width="stretch")
 
 
+def _edge_color_gradient(corr: float) -> str:
+    """Full diverging colorscale (RdBu_r — same scale already used elsewhere
+    in this app for correlation heatmaps, e.g. the Sector Shock tab's DCC
+    Correlation Matrix) instead of network.py's edge_color_for_correlation()
+    2-color coral/steelblue interpolation. Kept in the page, not in
+    network.py, so that reviewed/merged module's own coloring function stays
+    untouched — positive correlation -> red, negative -> blue, matching the
+    rest of the app's convention."""
+    t = (max(-1.0, min(1.0, corr)) + 1.0) / 2.0  # [-1, 1] -> [0, 1]
+    return pcolors.sample_colorscale("RdBu_r", [t])[0]
+
+
 def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: dict,
                                  node_sizes: dict, node_hover: dict):
     """Plotly rendering for a networkx.Graph from src.portfolio_builder.network —
     that module deliberately produces only graph structure, not a figure (its own
     docstring: layout/rendering is a page concern). Edge color uses
-    edge_color_for_correlation() unmodified. Node color is precomputed by the
+    _edge_color_gradient() (see above). Node color is precomputed by the
     caller via network.py's own node_color_for_percentile() — same function,
     unmodified, but fed a per-ticker P&L percentile for the selected scenario
     instead of the Portfolio Builder composite-ranking percentile it was
-    originally written for."""
+    originally written for.
+
+    Each edge gets an invisible midpoint marker carrying the hover tooltip —
+    Plotly's own hover-matching for a "lines" trace only triggers near an
+    actual plotted point (here, the two endpoints), not along the interior of
+    the segment, so without a midpoint marker hovering over the middle of a
+    long edge shows nothing."""
     pos = nx.spring_layout(graph, seed=42)
 
     edge_traces = []
+    midpoint_x, midpoint_y, midpoint_text, midpoint_color = [], [], [], []
     for u, v, edge_data in graph.edges(data=True):
         corr = correlation_from_distance(float(edge_data["weight"]))
-        color = edge_color_for_correlation(corr)
+        color = _edge_color_gradient(corr)
         is_mst = (u, v) in mst_edges or (v, u) in mst_edges
         x0, y0 = pos[u]
         x1, y1 = pos[v]
@@ -1317,10 +1335,22 @@ def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: 
             x=[x0, x1, None], y=[y0, y1, None],
             mode="lines",
             line=dict(width=3 if is_mst else 1, color=color, dash=None if is_mst else "dot"),
-            hoverinfo="text",
-            text=f"{u} – {v}: ρ={corr:.2f}",
+            hoverinfo="skip",
             showlegend=False,
         ))
+        midpoint_x.append((x0 + x1) / 2)
+        midpoint_y.append((y0 + y1) / 2)
+        midpoint_text.append(f"{u} – {v}: ρ={corr:.2f}")
+        midpoint_color.append(color)
+
+    edge_hover_trace = go.Scatter(
+        x=midpoint_x, y=midpoint_y,
+        mode="markers",
+        marker=dict(size=14, color=midpoint_color, opacity=0.0),
+        hoverinfo="text",
+        hovertext=midpoint_text,
+        showlegend=False,
+    )
 
     nodes = list(graph.nodes())
     node_trace = go.Scatter(
@@ -1339,7 +1369,7 @@ def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: 
         showlegend=False,
     )
 
-    fig = go.Figure(data=edge_traces + [node_trace])
+    fig = go.Figure(data=edge_traces + [edge_hover_trace, node_trace])
     fig.update_layout(
         title=title,
         xaxis=dict(visible=False),
@@ -1479,10 +1509,11 @@ with tab5:
                 "Node color: green = top-third P&L under this scenario, orange = "
                 "middle third, red = bottom third (same tri-tier convention a ranked "
                 "list would use). Node size ∝ portfolio weight. Edge color: diverging "
-                "coral↔steelblue by correlation strength (coral = positive, steelblue "
-                "= negative/hedge-like). Thick solid edges = Minimum Spanning Tree "
-                "(always drawn, guarantees connectivity). Thin dotted edges = "
-                "additional pairs clearing the threshold above."
+                "RdBu gradient by correlation strength (red = positive, blue = "
+                "negative/hedge-like) — hover an edge for its exact correlation. "
+                "Thick solid edges = Minimum Spanning Tree (always drawn, guarantees "
+                "connectivity). Thin dotted edges = additional pairs clearing the "
+                "threshold above."
             )
 
     st.markdown("---")
@@ -1553,11 +1584,18 @@ with tab5:
                     continue
 
                 _reg_dist = compute_distance_matrix(_reg_corr)
-                _reg_mst = build_sector_mst(_reg_dist, NetworkConfig())
-                _reg_graph = filter_edges_by_threshold(
-                    _reg_dist, _reg_mst, CorrelationNetworkConfig()
-                )
-                _reg_mst_edges = set(_reg_mst.edges())
+                # Complete graph, not an MST — with only a handful of sectors,
+                # showing every pairwise correlation directly is more
+                # informative than reducing to a spanning tree (which drops
+                # all but n-1 edges). All edges render uniformly (no
+                # solid-vs-dotted MST distinction); color alone carries
+                # correlation strength.
+                _reg_graph = nx.Graph()
+                _reg_graph.add_nodes_from(_reg_dist.index)
+                for _ri, _ra in enumerate(_reg_dist.index):
+                    for _rb in _reg_dist.index[_ri + 1:]:
+                        _reg_graph.add_edge(_ra, _rb, weight=float(_reg_dist.loc[_ra, _rb]))
+                _reg_mst_edges = set(_reg_graph.edges())
                 _reg_nodes = list(_reg_graph.nodes())
                 _reg_node_colors = {n: "#3b82f6" for n in _reg_nodes}
                 _max_sw = max(
@@ -1579,12 +1617,13 @@ with tab5:
                 st.plotly_chart(_reg_fig, width="stretch")
 
         st.caption(
-            "Edge color: diverging coral↔steelblue by correlation strength "
-            "(coral = positive, steelblue = negative/hedge-like). Thick solid "
-            "edges = Minimum Spanning Tree (always drawn). Thin dotted edges = "
-            "additional pairs clearing a fixed ±0.30 threshold. Node size ∝ "
-            "portfolio weight aggregated to that sector. Compare the two "
-            "panels — tighter, more coral (positive-correlated) edges under "
+            "Every sector pair is shown (a complete graph, not a Minimum "
+            "Spanning Tree) — with only a handful of sectors, all pairwise "
+            "correlations fit legibly. Edge color: diverging RdBu gradient by "
+            "correlation strength (red = positive, blue = negative/"
+            "hedge-like) — hover an edge for its exact correlation. Node size "
+            "∝ portfolio weight aggregated to that sector. Compare the two "
+            "panels — tighter, more red (positive-correlated) edges under "
             "crisis vs. calm is the regime-conditioning effect this overlay "
             "is meant to surface, unless a warning above says otherwise."
         )
