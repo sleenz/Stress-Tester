@@ -1,13 +1,26 @@
 """
-Correlation network (MST) + semantic zoom for the Portfolio Builder.
+Correlation network (MST) + semantic zoom.
 
 Reuse (Phase 0 audit + Phase 1 answer #1): the ticker x ticker correlation
-matrix is reconstructed from Phase 1's UniverseCache (correlation_row per
-ticker, aligned to cache.get_correlation_index()) — plain-correlation
-based, NOT DCC-GARCH (see fetch.py's module docstring for why: DCC-GARCH
-is fit at sector count and has an unresolved convergence-misreport issue;
-running it at ticker count would multiply that risk for a feature where a
-wrong number is invisible in the UI).
+matrix is reconstructed from UniverseCache's cached correlation_row values
+(correlation_row per ticker, aligned to cache.get_correlation_index()), or
+supplied directly by the caller via build_semantic_zoom_network()'s
+correlation= argument — plain-correlation based, NOT DCC-GARCH.
+
+Correction (Bahana Stress Tester fork, Phase 7): this module's docstring
+used to justify the plain-correlation choice by citing "an unresolved
+convergence-misreport issue" in DCCGARCHModel, attributed to the
+since-deleted fetch.py's own module docstring. That claim was audited
+(docs/architecture.md's src/risk/ section) and does not trace to anything
+in src/risk/dcc_garch.py's actual code: what exists there is a hard
+ConvergenceError guard (raised when more than half the univariate GARCH
+fits fail to converge) plus an explicit constant-volatility fallback for
+any single series that fails — proper failure handling, not a silent
+misreport. The decision to stay at ticker-level plain correlation here is
+still the right one (DCCGARCHModel is fit and validated at sector count in
+production, ~11 series; re-fitting it per-ticker for a rendering aid isn't
+worth the added convergence-failure surface) — just not for the originally
+-cited reason.
 
 Distance transform is the standard Mantegna (1999) MST metric,
 d = sqrt(2*(1-rho)) — a fixed mathematical definition, not a tunable
@@ -268,10 +281,11 @@ class NetworkStyleConfig:
     visually prominent (in fully-saturated hedge color) as an equally strong
     positive correlation is in fully-saturated positive color, not a faded
     afterthought. Color tokens below are the app's existing palette
-    (edge_color_positive/negative are hex equivalents of
-    app/pages/2_Optimization.py's "coral"/"steelblue"; node tier colors
-    reuse app/pages/4_Stress_Testing.py's low/warning/critical
-    green/orange/red), not new colors invented for this feature.
+    (edge_color_positive/negative are hex equivalents of the original
+    PortfolioOptimizer's "coral"/"steelblue" convention, from the since-
+    removed Optimization page; node tier colors reuse the Stress Testing
+    page's low/warning/critical green/orange/red), not new colors invented
+    for this feature.
     """
     edge_opacity: float = 1.0
     edge_color_positive: str = "#ff7f50"  # "coral", as a hex triplet so it can be gradient-interpolated

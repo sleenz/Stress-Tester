@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime-generated data (settings, presets, price/data caches, logs) —
+# regenerated on first run, not part of the source tree.
+data/
+.cache/
+logs/
+
+.env
+.venv/
+venv/
+
+.streamlit/secrets.toml
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+.DS_Store

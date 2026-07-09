@@ -236,12 +236,20 @@ with tab4:
         # EWMA volatility
         st.markdown("**EWMA Volatility**")
 
-        ewma_vol = ewma_volatility(returns, decay=0.94)
+        # Portfolio-level EWMA vol, not per-ticker — ewma_volatility() takes a
+        # DataFrame, so feed it portfolio_returns as a single named column
+        # rather than the multi-ticker `returns` (whose per-column output was
+        # previously computed and then discarded: the chart plotted a 20-day
+        # rolling std of weighted returns instead of this series' own values,
+        # a known mislabel — see docs/architecture.md's Known Issues history).
+        port_ewma_vol = ewma_volatility(
+            portfolio_returns.to_frame("portfolio"), decay=0.94
+        )["portfolio"]
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=ewma_vol.index,
-            y=(returns * weights).sum(axis=1).rolling(20).std() * np.sqrt(252) * 100,
+            x=port_ewma_vol.index,
+            y=port_ewma_vol.values * 100,
             name='Portfolio EWMA Vol',
             line=dict(color='blue')
         ))

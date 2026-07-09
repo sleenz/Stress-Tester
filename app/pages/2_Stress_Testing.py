@@ -10,12 +10,11 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.simulation.scenarios import StressTester, HISTORICAL_SCENARIOS, list_scenarios
+from src.simulation.scenarios import StressTester, UNIFORM_SHOCK_SCENARIOS, list_scenarios
 from src.simulation.monte_carlo import MonteCarloSimulator
 from src.simulation.historical_scenarios import (
     HistoricalStressor,
     HistoricalStressorConfig,
-    HISTORICAL_SCENARIOS as NEW_HISTORICAL_SCENARIOS,
 )
 # st.session_state.historical_actual_results  dict[str, HistoricalScenarioResult]
 from src.simulation.sector_stress import (
@@ -29,6 +28,19 @@ from src.risk.copula import CopulaConfig
 from src.risk.regime_detection import RegimeConfig
 from src.risk.sector_beta import SectorBetaConfig
 from src.data.data_manager import DataManager
+from src.portfolio_builder.network import (
+    NetworkConfig,
+    CorrelationNetworkConfig,
+    NetworkStyleConfig,
+    compute_distance_matrix,
+    build_ticker_mst,
+    build_sector_mst,
+    filter_edges_by_threshold,
+    edge_color_for_correlation,
+    correlation_from_distance,
+    node_color_for_percentile,
+)
+import networkx as nx
 
 st.set_page_config(page_title="Stress Testing", page_icon=None, layout="wide")
 
@@ -62,8 +74,9 @@ stress_tester = StressTester(returns, weights, portfolio_value)
 st.markdown("---")
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Historical Scenarios", "Monte-Carlo Simulation", "Sector Shock", "Macro Contagion Network"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Historical Scenarios", "Monte-Carlo Simulation", "Sector Shock",
+    "Macro Contagion Network", "Correlation Network",
 ])
 
 with tab1:
@@ -190,12 +203,12 @@ with tab1:
 
     scenario_key = st.selectbox(
         "Select Scenario",
-        list(HISTORICAL_SCENARIOS.keys()),
-        format_func=lambda x: HISTORICAL_SCENARIOS[x]['name']
+        list(UNIFORM_SHOCK_SCENARIOS.keys()),
+        format_func=lambda x: UNIFORM_SHOCK_SCENARIOS[x]['name']
     )
 
     if scenario_key:
-        scenario = HISTORICAL_SCENARIOS[scenario_key]
+        scenario = UNIFORM_SHOCK_SCENARIOS[scenario_key]
         col1, col2 = st.columns(2)
 
         with col1:
@@ -1281,6 +1294,302 @@ with tab4:
                 st.plotly_chart(_fig_mc_cmp, width="stretch")
 
 
+def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: dict,
+                                 node_sizes: dict, node_hover: dict):
+    """Plotly rendering for a networkx.Graph from src.portfolio_builder.network —
+    that module deliberately produces only graph structure, not a figure (its own
+    docstring: layout/rendering is a page concern). Edge color uses
+    edge_color_for_correlation() unmodified. Node color is precomputed by the
+    caller via network.py's own node_color_for_percentile() — same function,
+    unmodified, but fed a per-ticker P&L percentile for the selected scenario
+    instead of the Portfolio Builder composite-ranking percentile it was
+    originally written for."""
+    pos = nx.spring_layout(graph, seed=42)
+
+    edge_traces = []
+    for u, v, edge_data in graph.edges(data=True):
+        corr = correlation_from_distance(float(edge_data["weight"]))
+        color = edge_color_for_correlation(corr)
+        is_mst = (u, v) in mst_edges or (v, u) in mst_edges
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_traces.append(go.Scatter(
+            x=[x0, x1, None], y=[y0, y1, None],
+            mode="lines",
+            line=dict(width=3 if is_mst else 1, color=color, dash=None if is_mst else "dot"),
+            hoverinfo="text",
+            text=f"{u} – {v}: ρ={corr:.2f}",
+            showlegend=False,
+        ))
+
+    nodes = list(graph.nodes())
+    node_trace = go.Scatter(
+        x=[pos[n][0] for n in nodes],
+        y=[pos[n][1] for n in nodes],
+        mode="markers+text",
+        text=nodes,
+        textposition="top center",
+        marker=dict(
+            size=[node_sizes.get(n, 24) for n in nodes],
+            color=[node_colors.get(n, "#999999") for n in nodes],
+            line=dict(width=1, color="white"),
+        ),
+        hoverinfo="text",
+        hovertext=[node_hover.get(n, n) for n in nodes],
+        showlegend=False,
+    )
+
+    fig = go.Figure(data=edge_traces + [node_trace])
+    fig.update_layout(
+        title=title,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        height=520,
+        margin=dict(t=40),
+    )
+    return fig
+
+
+with tab5:
+    st.subheader("Correlation Network")
+    st.markdown(
+        "Ticker-level correlation network (Minimum Spanning Tree), colored by "
+        "each holding's real P&L under a selected stress scenario. This is a "
+        "**static companion view** built from plain pairwise correlation on "
+        "the price data already loaded above — independent of the DCC-GARCH/"
+        "copula correlation logic the Sector Shock tab uses, not a replacement "
+        "for it."
+    )
+
+    _cn_tickers = list(returns.columns)
+    _cn_weights = {t: float(w) for t, w in zip(_cn_tickers, weights)}
+
+    # P&L sources: Historical and Sector Shock only. Macro Contagion is
+    # deliberately excluded — Leontief propagates distress at SECTOR level;
+    # every ticker sharing a sector gets an identical direct_return/total_return
+    # in MacroStressEngine.run_stress(), scaled only by that ticker's own
+    # weight, not a real per-ticker allocation. Coloring nodes by it would look
+    # like differentiated per-ticker signal when it isn't one.
+    _cn_pnl_sources: dict = {}
+
+    if "historical_actual_results" in st.session_state:
+        for _hn, _hres in st.session_state.historical_actual_results.items():
+            _cn_pnl_sources[f"Historical: {_hn}"] = dict(_hres.pnl_by_stock)
+
+    _ss_results_for_pnl = []
+    if "ss_all_results" in st.session_state:
+        _ss_results_for_pnl = list(st.session_state.ss_all_results)
+    elif "ss_result" in st.session_state:
+        _ss_results_for_pnl = [st.session_state.ss_result]
+    for _sres in _ss_results_for_pnl:
+        _sdf = _sres.to_dataframe()
+        if not _sdf.empty:
+            _cn_pnl_sources[f"Sector Shock: {_sres.scenario.name}"] = dict(
+                zip(_sdf["ticker"], _sdf["pnl_contribution_beta"])
+            )
+
+    if not _cn_pnl_sources:
+        st.info(
+            "No scenario P&L available yet. Run **Run All Historical Scenarios** "
+            "(Historical Scenarios tab, actual-returns mode) or fit models and "
+            "run a scenario (Sector Shock tab) first, then come back here to "
+            "color the network by real per-ticker P&L."
+        )
+    else:
+        st.caption(
+            "Macro Contagion scenarios aren't offered here: Leontief propagates "
+            "distress at sector level only, so every ticker in the same sector "
+            "would get an identical, non-differentiated number, not real "
+            "per-ticker P&L."
+        )
+
+        _cn_scenario_label = st.selectbox(
+            "P&L source (colors the network)",
+            list(_cn_pnl_sources.keys()),
+            key="cn_scenario_label",
+        )
+        _cn_pnl = _cn_pnl_sources[_cn_scenario_label]
+
+        with st.expander("Network Configuration", expanded=False):
+            _cn_col1, _cn_col2 = st.columns(2)
+            with _cn_col1:
+                _cn_algo = st.selectbox(
+                    "MST algorithm", ["kruskal", "prim", "boruvka"], key="cn_mst_algo",
+                )
+            with _cn_col2:
+                _cn_pos_thresh = st.slider(
+                    "Positive-correlation edge threshold", 0.0, 1.0, 0.30, 0.05,
+                    key="cn_pos_thresh",
+                    help="Additional non-MST edges are drawn where correlation >= this.",
+                )
+                _cn_hedge_thresh = st.slider(
+                    "Hedge (anti-correlation) edge threshold", -1.0, 0.0, -0.30, 0.05,
+                    key="cn_hedge_thresh",
+                    help="Additional non-MST edges are drawn where correlation <= this.",
+                )
+
+        # Tickers with no P&L entry for this scenario (e.g. excluded from that
+        # stress run) are dropped from the network, not colored as if they had
+        # a real value.
+        _cn_net_tickers = [t for t in _cn_tickers if t in _cn_pnl]
+        _cn_missing = [t for t in _cn_tickers if t not in _cn_pnl]
+        if _cn_missing:
+            st.caption(f"No P&L for this scenario, excluded from the network: {_cn_missing}")
+
+        if len(_cn_net_tickers) < 2:
+            st.warning("Need at least 2 tickers with P&L for this scenario to build a network.")
+        else:
+            _cn_corr = returns[_cn_net_tickers].corr()
+            _cn_dist = compute_distance_matrix(_cn_corr)
+            _cn_mst = build_ticker_mst(
+                _cn_dist, NetworkConfig(mst_algorithm=str(st.session_state.cn_mst_algo))
+            )
+            _cn_thresh_cfg = CorrelationNetworkConfig(
+                positive_threshold=float(st.session_state.cn_pos_thresh),
+                hedge_threshold=float(st.session_state.cn_hedge_thresh),
+            )
+            _cn_graph = filter_edges_by_threshold(_cn_dist, _cn_mst, _cn_thresh_cfg)
+            _cn_mst_edges = set(_cn_mst.edges())
+
+            _cn_pnl_series = pd.Series({t: _cn_pnl[t] for t in _cn_net_tickers})
+            _cn_pctile = _cn_pnl_series.rank(pct=True)
+            _cn_style_cfg = NetworkStyleConfig()
+            _cn_node_colors = {
+                t: node_color_for_percentile(float(_cn_pctile[t]), _cn_style_cfg)
+                for t in _cn_net_tickers
+            }
+            _max_w = max((_cn_weights.get(t, 0.0) for t in _cn_net_tickers), default=0.0) or 1.0
+            _cn_node_sizes = {
+                t: 18 + 40 * (_cn_weights.get(t, 0.0) / _max_w) for t in _cn_net_tickers
+            }
+            _cn_hover = {
+                t: (
+                    f"{t}: P&L ${_cn_pnl[t]:,.0f} (percentile {_cn_pctile[t]:.0%}), "
+                    f"weight {_cn_weights.get(t, 0.0):.1%}"
+                )
+                for t in _cn_net_tickers
+            }
+
+            _cn_fig = _render_correlation_network(
+                _cn_graph, _cn_mst_edges, f"Ticker Correlation Network — {_cn_scenario_label}",
+                _cn_node_colors, _cn_node_sizes, _cn_hover,
+            )
+            st.plotly_chart(_cn_fig, width="stretch")
+            st.caption(
+                "Node color: green = top-third P&L under this scenario, orange = "
+                "middle third, red = bottom third (same tri-tier convention a ranked "
+                "list would use). Node size ∝ portfolio weight. Edge color: diverging "
+                "coral↔steelblue by correlation strength (coral = positive, steelblue "
+                "= negative/hedge-like). Thick solid edges = Minimum Spanning Tree "
+                "(always drawn, guarantees connectivity). Thin dotted edges = "
+                "additional pairs clearing the threshold above."
+            )
+
+    st.markdown("---")
+    st.subheader("Sector Regime-Correlation Overlay (stretch)")
+    st.markdown(
+        "Sector-supernode network under a calm-regime vs. crisis-regime "
+        "correlation matrix, side by side — shows correlations tightening "
+        "under stress, as DCC-GARCH/HMM regime-conditioning models it. Uses "
+        "the same rendering engine as the ticker network above; an "
+        "additional mode, not a replacement for it."
+    )
+
+    _reg_engine = st.session_state.get("ss_engine")
+    if _reg_engine is None or _reg_engine._regime_result is None or _reg_engine._dcc_result is None:
+        st.info(
+            "Requires Sector Shock's DCC-GARCH + HMM regime models. Run "
+            "**Fetch Sectors & Fit Models** in the Sector Shock tab first."
+        )
+    else:
+        _reg_dcc = _reg_engine._dcc_result
+        _reg_regime = _reg_engine._regime_result
+        _reg_detector = _reg_engine._regime_detector
+        _reg_sector_map = st.session_state.get("ss_sector_map", {})
+
+        _reg_sector_weights: dict = {}
+        for _rt, _rw in zip(_cn_tickers, weights):
+            _rsec = _reg_sector_map.get(_rt)
+            if _rsec:
+                _reg_sector_weights[_rsec] = _reg_sector_weights.get(_rsec, 0.0) + float(_rw)
+
+        def _n_common_regime_obs(regime_label: str) -> int:
+            """Replicates MarketRegimeDetector.get_regime_correlation()'s own
+            aligned-observation count (regime_detection.py, same date-
+            intersection logic) — read-only, does not modify that function —
+            purely so this page can warn BEFORE rendering its identity-matrix
+            fallback as if it were a real network."""
+            _rcfg = _reg_regime.config
+            _label_map = _rcfg.regime_label_map.get(
+                _rcfg.n_states, {i: f"state_{i}" for i in range(_rcfg.n_states)}
+            )
+            _rev_map = {v: k for k, v in _label_map.items()}
+            if regime_label not in _rev_map:
+                return 0
+            _target = _rev_map[regime_label]
+            _mask = _reg_regime.state_sequence == _target
+            _target_dates = _reg_regime.state_sequence.index[_mask]
+            _common = _target_dates.intersection(_reg_dcc.conditional_volatilities.index)
+            return len(_common)
+
+        _reg_col1, _reg_col2 = st.columns(2)
+        for _reg_col, _reg_label in [(_reg_col1, "calm"), (_reg_col2, "crisis")]:
+            with _reg_col:
+                _n_common = _n_common_regime_obs(_reg_label)
+                if _n_common < 5:
+                    st.warning(
+                        f"Insufficient regime history for '{_reg_label}' — only "
+                        f"{_n_common} aligned observation{'s' if _n_common != 1 else ''}. "
+                        "The network below is a fallback identity matrix (no real "
+                        "correlation signal), not real stress/calm conditions."
+                    )
+
+                try:
+                    _reg_corr = _reg_detector.get_regime_correlation(
+                        _reg_label, _reg_dcc, _reg_regime
+                    )
+                except ValueError as _rve:
+                    st.error(f"Could not compute '{_reg_label}' correlation: {_rve}")
+                    continue
+
+                _reg_dist = compute_distance_matrix(_reg_corr)
+                _reg_mst = build_sector_mst(_reg_dist, NetworkConfig())
+                _reg_graph = filter_edges_by_threshold(
+                    _reg_dist, _reg_mst, CorrelationNetworkConfig()
+                )
+                _reg_mst_edges = set(_reg_mst.edges())
+                _reg_nodes = list(_reg_graph.nodes())
+                _reg_node_colors = {n: "#3b82f6" for n in _reg_nodes}
+                _max_sw = max(
+                    (_reg_sector_weights.get(n, 0.0) for n in _reg_nodes), default=0.0
+                ) or 1.0
+                _reg_node_sizes = {
+                    n: 18 + 40 * (_reg_sector_weights.get(n, 0.0) / _max_sw)
+                    for n in _reg_nodes
+                }
+                _reg_hover = {
+                    n: f"{n}: weight {_reg_sector_weights.get(n, 0.0):.1%}"
+                    for n in _reg_nodes
+                }
+                _reg_fig = _render_correlation_network(
+                    _reg_graph, _reg_mst_edges,
+                    f"{_reg_label.capitalize()} Regime ({_n_common} obs)",
+                    _reg_node_colors, _reg_node_sizes, _reg_hover,
+                )
+                st.plotly_chart(_reg_fig, width="stretch")
+
+        st.caption(
+            "Edge color: diverging coral↔steelblue by correlation strength "
+            "(coral = positive, steelblue = negative/hedge-like). Thick solid "
+            "edges = Minimum Spanning Tree (always drawn). Thin dotted edges = "
+            "additional pairs clearing a fixed ±0.30 threshold. Node size ∝ "
+            "portfolio weight aggregated to that sector. Compare the two "
+            "panels — tighter, more coral (positive-correlated) edges under "
+            "crisis vs. calm is the regime-conditioning effect this overlay "
+            "is meant to surface, unless a warning above says otherwise."
+        )
+
+
 # ── Hedging Effectiveness During Stress Events ────────────────────────────────
 st.markdown("---")
 st.subheader("Hedging Effectiveness During Stress Events")
@@ -1296,7 +1605,7 @@ if st.button("Analyse Hedging Effectiveness", key="hedge_stress_btn"):
         nonoverlap_names: list = []
         _scenario_data: list   = []
 
-        for _sk, _sv in HISTORICAL_SCENARIOS.items():
+        for _sk, _sv in UNIFORM_SHOCK_SCENARIOS.items():
             try:
                 scen_start = pd.Timestamp(_sv["start_date"])
                 scen_end   = pd.Timestamp(_sv["end_date"])
@@ -1359,7 +1668,7 @@ if st.button("Analyse Hedging Effectiveness", key="hedge_stress_btn"):
         # One st.info message explaining source — not a warning, not an error
         if nonoverlap_names:
             n_missing = len(nonoverlap_names)
-            n_total   = len(HISTORICAL_SCENARIOS)
+            n_total   = len(UNIFORM_SHOCK_SCENARIOS)
             st.info(
                 f"**Stress-period beta:** {n_total - n_missing} of {n_total} historical "
                 f"scenarios fall within your data window "

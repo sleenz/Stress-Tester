@@ -7,7 +7,7 @@ from .monte_carlo import (
 from .scenarios import (
     StressTester,
     StressTestScenario,
-    HISTORICAL_SCENARIOS,
+    UNIFORM_SHOCK_SCENARIOS,
     CUSTOM_SCENARIOS,
     get_scenario,
     list_scenarios,
@@ -18,7 +18,7 @@ __all__ = [
     "run_monte_carlo",
     "StressTester",
     "StressTestScenario",
-    "HISTORICAL_SCENARIOS",
+    "UNIFORM_SHOCK_SCENARIOS",
     "CUSTOM_SCENARIOS",
     "get_scenario",
     "list_scenarios",

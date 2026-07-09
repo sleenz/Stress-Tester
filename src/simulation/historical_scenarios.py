@@ -84,7 +84,7 @@ class HistoricalScenarioResult:
 # Scenario library
 # ──────────────────────────────────────────────────────────────────────────────
 
-HISTORICAL_SCENARIOS: list[HistoricalScenario] = [
+PER_STOCK_CRISIS_SCENARIOS: list[HistoricalScenario] = [
     HistoricalScenario(
         name="COVID-19 Crash",
         start_date="2020-02-19",
@@ -493,7 +493,7 @@ class HistoricalStressor:
         weights : pd.Series
         portfolio_value : float
         scenarios : list[HistoricalScenario], optional
-            Defaults to HISTORICAL_SCENARIOS.
+            Defaults to PER_STOCK_CRISIS_SCENARIOS.
 
         Returns
         -------
@@ -501,7 +501,7 @@ class HistoricalStressor:
             Keyed by scenario.name.
         """
         if scenarios is None:
-            scenarios = HISTORICAL_SCENARIOS
+            scenarios = PER_STOCK_CRISIS_SCENARIOS
 
         results: dict[str, HistoricalScenarioResult] = {}
         for i, scenario in enumerate(scenarios, 1):
@@ -599,7 +599,7 @@ def _smoke_test() -> None:
     stressor = HistoricalStressor()
 
     # ── COVID-19: all three existed → expect "actual" for all ────────────────
-    covid = next(s for s in HISTORICAL_SCENARIOS if s.name == "COVID-19 Crash")
+    covid = next(s for s in PER_STOCK_CRISIS_SCENARIOS if s.name == "COVID-19 Crash")
     result = stressor.run(covid, tickers, weights, portfolio_value)
 
     print(f"\nScenario: {result.scenario.name}")
@@ -637,7 +637,7 @@ def _smoke_test() -> None:
     print("  P&L sign consistent ✓")
 
     # ── 1997 Asian Crisis: US stocks vs JKSE — expect "beta_scaled" ──────────
-    asian = next(s for s in HISTORICAL_SCENARIOS if s.name == "1997 Asian Crisis")
+    asian = next(s for s in PER_STOCK_CRISIS_SCENARIOS if s.name == "1997 Asian Crisis")
     result_97 = stressor.run(asian, tickers, weights, portfolio_value)
     print(f"\nScenario: {result_97.scenario.name}")
     print(f"  Index ({result_97.scenario.market_index}): {result_97.index_return:.2%}")
@@ -654,7 +654,7 @@ def _smoke_test() -> None:
         "Scenario", "Index Return", "Portfolio Return", "Portfolio P&L",
         "Worst Stock", "Best Stock", "N Actual", "N Beta-Scaled",
     ], f"Unexpected columns: {list(summary.columns)}"
-    print(f"\nrun_all(): {len(all_results)}/{len(HISTORICAL_SCENARIOS)} scenarios ✓")
+    print(f"\nrun_all(): {len(all_results)}/{len(PER_STOCK_CRISIS_SCENARIOS)} scenarios ✓")
     print(summary[["Scenario", "Portfolio Return", "N Actual", "N Beta-Scaled"]].to_string(index=False))
 
     print("\n✓ historical_scenarios smoke test passed\n")
