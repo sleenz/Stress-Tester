@@ -9,11 +9,14 @@
 
 ## Context (read once, don't re-derive)
 Forked from PortfolioOptimizer to ship a scoped stress-testing product for
-Bahana TCW. Target scope: **Portfolio Input + Stress Testing only.**
+Bahana TCW. Original target scope for v1: **Portfolio Input + Stress
+Testing only**, with Risk Analytics as an optional Phase 6 fast-follow.
 Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock
 Valuation are OUT of scope for this fork — do not port, fix, or reference
-them beyond what's needed to cleanly remove them. Risk Analytics is a
-documented Phase 6 candidate, not required for v1.
+them beyond what's needed to cleanly remove them. Risk Analytics has since
+shipped (Phase 6, done, out of sequence ahead of Phase 4/5 per explicit
+user directive) — current scope is **Portfolio Input + Stress Testing +
+Risk Analytics**.
 
 ---
 
@@ -206,7 +209,8 @@ collections still resolve correctly where used.
 results for a real multi-ticker IDX+US portfolio.
 
 ## PHASE 6 (optional, not required for v1) — Risk Analytics fast-follow — DONE
-Only start after Phase 5 ships. Rewires `3_Risk_Analytics.py` against
+Originally planned to start only after Phase 5 shipped; done ahead of
+Phase 4/5 by explicit user directive instead. Rewires `3_Risk_Analytics.py` against
 `src/risk/metrics.py` / `var.py` / `garch.py`, which Phase 1 left in place
 dormant rather than deleted — for baseline VaR/Sharpe context alongside
 stress scenario results.
