@@ -34,6 +34,7 @@ from src.portfolio_builder.network import (
     NetworkStyleConfig,
     compute_distance_matrix,
     build_ticker_mst,
+    build_sector_mst,
     filter_edges_by_threshold,
     edge_color_for_correlation,
     correlation_from_distance,
@@ -1483,6 +1484,110 @@ with tab5:
                 "(always drawn, guarantees connectivity). Thin dotted edges = "
                 "additional pairs clearing the threshold above."
             )
+
+    st.markdown("---")
+    st.subheader("Sector Regime-Correlation Overlay (stretch)")
+    st.markdown(
+        "Sector-supernode network under a calm-regime vs. crisis-regime "
+        "correlation matrix, side by side — shows correlations tightening "
+        "under stress, as DCC-GARCH/HMM regime-conditioning models it. Uses "
+        "the same rendering engine as the ticker network above; an "
+        "additional mode, not a replacement for it."
+    )
+
+    _reg_engine = st.session_state.get("ss_engine")
+    if _reg_engine is None or _reg_engine._regime_result is None or _reg_engine._dcc_result is None:
+        st.info(
+            "Requires Sector Shock's DCC-GARCH + HMM regime models. Run "
+            "**Fetch Sectors & Fit Models** in the Sector Shock tab first."
+        )
+    else:
+        _reg_dcc = _reg_engine._dcc_result
+        _reg_regime = _reg_engine._regime_result
+        _reg_detector = _reg_engine._regime_detector
+        _reg_sector_map = st.session_state.get("ss_sector_map", {})
+
+        _reg_sector_weights: dict = {}
+        for _rt, _rw in zip(_cn_tickers, weights):
+            _rsec = _reg_sector_map.get(_rt)
+            if _rsec:
+                _reg_sector_weights[_rsec] = _reg_sector_weights.get(_rsec, 0.0) + float(_rw)
+
+        def _n_common_regime_obs(regime_label: str) -> int:
+            """Replicates MarketRegimeDetector.get_regime_correlation()'s own
+            aligned-observation count (regime_detection.py, same date-
+            intersection logic) — read-only, does not modify that function —
+            purely so this page can warn BEFORE rendering its identity-matrix
+            fallback as if it were a real network."""
+            _rcfg = _reg_regime.config
+            _label_map = _rcfg.regime_label_map.get(
+                _rcfg.n_states, {i: f"state_{i}" for i in range(_rcfg.n_states)}
+            )
+            _rev_map = {v: k for k, v in _label_map.items()}
+            if regime_label not in _rev_map:
+                return 0
+            _target = _rev_map[regime_label]
+            _mask = _reg_regime.state_sequence == _target
+            _target_dates = _reg_regime.state_sequence.index[_mask]
+            _common = _target_dates.intersection(_reg_dcc.conditional_volatilities.index)
+            return len(_common)
+
+        _reg_col1, _reg_col2 = st.columns(2)
+        for _reg_col, _reg_label in [(_reg_col1, "calm"), (_reg_col2, "crisis")]:
+            with _reg_col:
+                _n_common = _n_common_regime_obs(_reg_label)
+                if _n_common < 5:
+                    st.warning(
+                        f"Insufficient regime history for '{_reg_label}' — only "
+                        f"{_n_common} aligned observation{'s' if _n_common != 1 else ''}. "
+                        "The network below is a fallback identity matrix (no real "
+                        "correlation signal), not real stress/calm conditions."
+                    )
+
+                try:
+                    _reg_corr = _reg_detector.get_regime_correlation(
+                        _reg_label, _reg_dcc, _reg_regime
+                    )
+                except ValueError as _rve:
+                    st.error(f"Could not compute '{_reg_label}' correlation: {_rve}")
+                    continue
+
+                _reg_dist = compute_distance_matrix(_reg_corr)
+                _reg_mst = build_sector_mst(_reg_dist, NetworkConfig())
+                _reg_graph = filter_edges_by_threshold(
+                    _reg_dist, _reg_mst, CorrelationNetworkConfig()
+                )
+                _reg_mst_edges = set(_reg_mst.edges())
+                _reg_nodes = list(_reg_graph.nodes())
+                _reg_node_colors = {n: "#3b82f6" for n in _reg_nodes}
+                _max_sw = max(
+                    (_reg_sector_weights.get(n, 0.0) for n in _reg_nodes), default=0.0
+                ) or 1.0
+                _reg_node_sizes = {
+                    n: 18 + 40 * (_reg_sector_weights.get(n, 0.0) / _max_sw)
+                    for n in _reg_nodes
+                }
+                _reg_hover = {
+                    n: f"{n}: weight {_reg_sector_weights.get(n, 0.0):.1%}"
+                    for n in _reg_nodes
+                }
+                _reg_fig = _render_correlation_network(
+                    _reg_graph, _reg_mst_edges,
+                    f"{_reg_label.capitalize()} Regime ({_n_common} obs)",
+                    _reg_node_colors, _reg_node_sizes, _reg_hover,
+                )
+                st.plotly_chart(_reg_fig, width="stretch")
+
+        st.caption(
+            "Edge color: diverging coral↔steelblue by correlation strength "
+            "(coral = positive, steelblue = negative/hedge-like). Thick solid "
+            "edges = Minimum Spanning Tree (always drawn). Thin dotted edges = "
+            "additional pairs clearing a fixed ±0.30 threshold. Node size ∝ "
+            "portfolio weight aggregated to that sector. Compare the two "
+            "panels — tighter, more coral (positive-correlated) edges under "
+            "crisis vs. calm is the regime-conditioning effect this overlay "
+            "is meant to surface, unless a warning above says otherwise."
+        )
 
 
 # ── Hedging Effectiveness During Stress Events ────────────────────────────────

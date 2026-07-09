@@ -2,7 +2,7 @@
 
 A scoped fork of PortfolioOptimizer, built for Bahana TCW: **Portfolio Input + Stress Testing + Risk Analytics.** Multi-source price ingestion, historical crisis replay, DCC-GARCH/Student-t-copula/HMM-regime sector shock propagation, Leontief macro contagion, and a baseline VaR/Sharpe/GARCH risk dashboard — with meaningful support for both US equities and the Indonesian market (IDX, `.JK` tickers).
 
-Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics was originally a documented Phase 6 fast-follow with its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) kept dormant in the tree rather than deleted — Phase 6 has since restored `3_Risk_Analytics.py` against them, so they're active now, not dormant. `src/portfolio_builder/network.py` is likewise now active (Phase 7a) as a Correlation Network tab on Stress Testing, colored by real per-ticker P&L from a selected Historical or Sector Shock scenario — Macro Contagion is deliberately not offered as a P&L source there (see CLAUDE.md for why). Phase 7b (a regime-correlation overlay stretch goal) has not been attempted.
+Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics was originally a documented Phase 6 fast-follow with its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) kept dormant in the tree rather than deleted — Phase 6 has since restored `3_Risk_Analytics.py` against them, so they're active now, not dormant. `src/portfolio_builder/network.py` is likewise now active as a Correlation Network tab on Stress Testing, with two sections: (7a) a ticker-level MST colored by real per-ticker P&L from a selected Historical or Sector Shock scenario — Macro Contagion is deliberately not offered as a P&L source there (see CLAUDE.md for why) — and (7b) a sector-supernode calm-vs-crisis regime-correlation overlay driven by the fitted Sector Shock engine's DCC-GARCH/HMM models.
 
 > **Disclaimer:** This tool is a calculation-assistance aid. It is not intended as the sole basis for financial decisions. Always do your own research (DYOR).
 
@@ -61,7 +61,7 @@ No separate lint config is checked in; `python -m py_compile $(git ls-files '*.p
 | Hedging Effectiveness | Beta classification against portfolio returns, stress-period vs. full-period fallback, hedge-effectiveness scoring |
 | Risk Analytics | VaR/CVaR (historical, parametric, Cornish-Fisher), GARCH/EWMA volatility, drawdown family, Sharpe/Sortino/Calmar/Omega |
 | Deep Risk Analysis | Tail risk (Jarque-Bera, QQ plot), Monte Carlo VaR, component/marginal VaR, Effective Number of Bets via PCA |
-| Correlation Network | Ticker-level Minimum Spanning Tree, colored by real per-ticker P&L from a selected Historical or Sector Shock scenario; edge color by correlation strength |
+| Correlation Network | Ticker-level Minimum Spanning Tree, colored by real per-ticker P&L from a selected Historical or Sector Shock scenario; plus a sector-supernode calm-vs-crisis regime-correlation overlay (requires Sector Shock's models fitted first) |
 
 ---
 
@@ -83,9 +83,9 @@ Stress-Tester/
 |   |                                     # metrics.py / var.py / garch.py — used by 3_Risk_Analytics.py (Phase 6)
 |   +-- simulation/                       # Monte Carlo, historical/sector/macro stress engines
 |   +-- portfolio/                        # holdings.py only — calculator.py/rebalancer.py removed (Optimization/Monitoring out of scope)
-|   +-- portfolio_builder/                # network.py — used by Stress Testing's Correlation Network tab (Phase 7a)
+|   +-- portfolio_builder/                # network.py — used by Stress Testing's Correlation Network tab (Phase 7a+7b)
 |   |                                     # cache.py stays dormant (network.py's build_semantic_zoom_network()/
-|   |                                     # build_correlation_matrix() need it, but Phase 7a's tab doesn't call those)
+|   |                                     # build_correlation_matrix() need it, but neither 7a nor 7b calls those)
 |   +-- utils/                            # Presets, settings, logging, helpers
 |
 +-- tests/                                # pytest suite (preset manager, stock-sector beta)

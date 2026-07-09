@@ -6,8 +6,8 @@
 > P&L-colored stress-testing view rather than a generic Portfolio-Builder-style network).
 > Referenced from `CLAUDE.md`. Status as of this version: Phase 0, 1, 3 done; Phase 2 skipped
 > by explicit user directive (still outstanding); Phase 4 and 5 skipped by explicit user
-> directive, out of sequence, to prioritize Phase 6 and 7; Phase 6 done; Phase 7a done, 7b
-> (stretch goal) not attempted. See git history / PR description for the phase-by-phase
+> directive, out of sequence, to prioritize Phase 6 and 7; Phase 6 done; Phase 7a and 7b
+> (stretch goal) both done. See git history / PR description for the phase-by-phase
 > handoff notes.
 
 ## Context (read once, don't re-derive)
@@ -220,7 +220,7 @@ Phase 4/5 by explicit user directive instead. Rewires `3_Risk_Analytics.py` agai
 dormant rather than deleted — for baseline VaR/Sharpe context alongside
 stress scenario results.
 
-## PHASE 7 (optional, not required for v1) — Correlation network as a stress-tester view — 7a DONE, 7b NOT ATTEMPTED
+## PHASE 7 (optional, not required for v1) — Correlation network as a stress-tester view — 7a DONE, 7b DONE
 Originally planned to start only after Phase 5 shipped; 7a done ahead of
 Phase 4/5 by explicit user directive instead, independently of Phase 6.
 Revised mid-implementation (see below) from a generic Portfolio-Builder-
@@ -279,15 +279,48 @@ hard `ConvergenceError` guard plus an explicit constant-vol fallback) and
 no longer cites the unverified reason. The ticker-level decision itself
 was always fine — only the stated justification was wrong.
 
-**7b — Regime-correlation overlay (stretch goal) — NOT ATTEMPTED.** Uses
-`network.py`'s existing sector-supernode MST mode ("semantic zoom").
-Would feed it sector-level correlation from
-`DCCGARCHModel.get_correlation_at_quantile()` or
-`MarketRegimeDetector.get_regime_correlation()` for the active scenario's
-stress/calm state, with the sub-5-observation identity-matrix fallback
-required to render a visible "insufficient regime history" warning rather
-than a normal-looking network. Deferred — explicitly optional, not
-required to close this phase; revisit as a separate follow-up if wanted.
+**7b — Regime-correlation overlay (stretch goal) — DONE.** Added a
+"Sector Regime-Correlation Overlay" section below the ticker network on
+the same Correlation Network tab — an additional mode, not a replacement
+for 7a's default ticker view or its `.corr()` data source. Uses
+`network.py`'s existing sector-supernode MST functions
+(`build_sector_mst`, reusing `compute_distance_matrix`/
+`filter_edges_by_threshold`/`edge_color_for_correlation` from 7a
+unmodified) fed sector-level correlation from
+`MarketRegimeDetector.get_regime_correlation()` (via the fitted Sector
+Shock engine's `_dcc_result`/`_regime_result`/`_regime_detector`) for
+"calm" and "crisis" side by side. `get_correlation_at_quantile()` was not
+used — the CHECK explicitly requires exercising the sub-5-observation
+identity-matrix fallback, which only `get_regime_correlation()` has.
+
+`get_regime_correlation()` returns only a DataFrame, no flag distinguishing
+a real average from its identity-matrix fallback. Rather than modify that
+function (against this project's absolute constraints), the page
+replicates its exact aligned-observation count (same date-intersection
+logic against `regime_result.state_sequence` and
+`dcc_result.conditional_volatilities.index`) read-only, purely to decide
+whether to show the "Insufficient regime history for '<regime>'" warning
+*before* rendering. Verified this replication is bit-exact with the real
+function's own fallback trigger: fit real `DCCGARCHModel`/
+`MarketRegimeDetector` instances on synthetic data, manufactured a
+`RegimeResult` with exactly 3 aligned days for one regime, and confirmed
+both the replicated count and the function's actual identity-matrix
+return agreed (`n_common=3 < 5` ↔ `is_identity=True`) — and also confirmed
+on a normal fit that regimes with plenty of history (277 obs) do NOT
+trigger it. No node-color reuse here (7a's P&L semantics don't apply to a
+regime-vs-regime edge-structure comparison) — nodes are a flat color,
+sized by aggregate sector weight.
+
+**CHECK (7b) result:** live portfolio (AAPL, MSFT, JPM, XOM, BBCA.JK)
+through Sector Shock's fit, then the overlay rendered Calm Regime (555
+obs) as a sparse 2-edge MST with near-neutral edge colors, and Crisis
+Regime (26 obs) as a denser 3-edge triangle with strongly coral
+(positive-correlated) edges — visibly tighter, more positively-correlated
+structure under crisis vs. calm, the regime-conditioning effect this
+overlay exists to surface. No warning fired in this run (correctly —
+both regimes had well above 5 observations); the sub-5 fallback path
+itself was verified via the synthetic test above, not by trying to coax
+a live portfolio into a data-starved regime.
 
 ---
 
