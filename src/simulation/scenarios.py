@@ -330,7 +330,7 @@ class StressTester:
             Index = tickers, values = decimal weights summing to 1.
         portfolio_value : float
         scenarios : list[HistoricalScenario], optional
-            If None, uses UNIFORM_SHOCK_SCENARIOS from historical_scenarios.py.
+            If None, uses PER_STOCK_CRISIS_SCENARIOS from historical_scenarios.py.
         config : HistoricalStressorConfig, optional
             If None, uses defaults.
 
