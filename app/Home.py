@@ -1,5 +1,5 @@
 """
-Advanced Portfolio Optimization System - Streamlit Web Interface
+Bahana Stress Tester - Streamlit Web Interface
 
 Main entry point for the Streamlit application.
 """
@@ -12,7 +12,7 @@ from src.utils.settings_manager import load_settings
 
 # Page configuration
 st.set_page_config(
-    page_title="Portfolio Optimizer",
+    page_title="Bahana Stress Tester",
     page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
@@ -51,8 +51,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Main header
-st.markdown('<p class="main-header">Portfolio Optimization System</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Advanced quantitative analysis for optimal portfolio construction</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header">Bahana Stress Tester</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header">Portfolio stress testing and scenario analysis for US and Indonesian (IDX) equities</p>', unsafe_allow_html=True)
 
 # Introduction
 st.markdown("---")
@@ -62,29 +62,24 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("### Welcome")
     st.markdown("""
-    This application provides professional-grade portfolio optimization
-    and risk management tools for investors. Navigate through the pages
-    using the sidebar to:
+    This application stress-tests a portfolio against historical crises,
+    sector-level shocks, and macroeconomic contagion scenarios. Navigate
+    through the pages using the sidebar to:
 
-    1. **Input** your portfolio parameters
-    2. **Optimize** using advanced algorithms
-    3. **Analyze** risk metrics
-    4. **Stress test** under various scenarios
-    5. **Monitor** and rebalance your portfolio
+    1. **Input** your portfolio holdings or tickers
+    2. **Stress test** under historical, sector, and macro scenarios
     """)
 
 with col2:
     st.markdown("### Quick Start")
     st.markdown("""
-    **Step 1:** Go to *Portfolio Input* and enter your tickers
+    **Step 1:** Go to *Portfolio Input* and enter your holdings or tickers
 
-    **Step 2:** Set your capital and constraints
+    **Step 2:** Set your time period and capital
 
-    **Step 3:** Choose an optimization method
+    **Step 3:** Go to *Stress Testing* and choose a scenario tab
 
-    **Step 4:** Review results and risk metrics
-
-    **Step 5:** Export your allocation plan
+    **Step 4:** Review portfolio impact, P&L, and hedging effectiveness
     """)
 
 st.markdown("---")
@@ -95,36 +90,27 @@ st.markdown("### Key Features")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown("#### Optimization Methods")
+    st.markdown("#### Historical Scenarios")
     st.markdown("""
-    - Maximum Sharpe Ratio
-    - Minimum Volatility
-    - Risk Parity
-    - Hierarchical Risk Parity (HRP)
-    - Black-Litterman Model
-    - Maximum Diversification
+    - 7 crisis scenarios (2008, COVID-19, ...)
+    - Actual per-stock returns, beta-scaled proxy fallback
+    - Hedging effectiveness analysis
     """)
 
 with col2:
-    st.markdown("#### Risk Analytics")
+    st.markdown("#### Sector Shock")
     st.markdown("""
-    - Value at Risk (VaR/CVaR)
-    - GARCH Volatility Forecasting
-    - Drawdown Analysis
-    - Performance Ratios
-    - Correlation Analysis
-    - Higher Moments
+    - DCC-GARCH dynamic correlations
+    - Student-t copula tail dependence
+    - HMM regime-conditioned correlation selection
     """)
 
 with col3:
-    st.markdown("#### Stress Testing")
+    st.markdown("#### Macro Contagion")
     st.markdown("""
-    - Historical Scenarios
-    - Monte Carlo Simulation
-    - Custom Stress Tests
-    - Sensitivity Analysis
-    - Probability Distributions
-    - Risk of Ruin
+    - Leontief input-output contagion model
+    - Trading Economics / FRED / yfinance macro factors
+    - Monte Carlo simulation (GBM, bootstrap, Student-t, jump-diffusion)
     """)
 
 st.markdown("---")
@@ -157,15 +143,15 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown("**Data Sources**")
-    st.caption("Yahoo Finance, Alpha Vantage, Twelve Data")
+    st.caption("Yahoo Finance, Alpha Vantage, Twelve Data, FMP, FRED, Trading Economics")
 
 with col2:
     st.markdown("**Technologies**")
-    st.caption("Python, Streamlit, Plotly, SciPy")
+    st.caption("Python, Streamlit, Plotly, SciPy, arch, hmmlearn")
 
 with col3:
     st.markdown("**Version**")
-    st.caption("2.3.1")
+    st.caption("Bahana Stress Tester 1.0.0")
 
 
 def main():
