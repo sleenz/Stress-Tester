@@ -134,7 +134,7 @@ with st.sidebar:
     _saved_id_by_label: dict = {}
     _saved_labels = []
     for _p in _saved_presets:
-        _label = f"⭐ {_p['name']}"
+        _label = f"{_p['name']}"
         if _name_counts[_p["name"]] > 1:
             _label += f" ({_p['preset_id'][:8]})"
         _saved_labels.append(_label)

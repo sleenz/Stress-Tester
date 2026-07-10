@@ -442,10 +442,10 @@ with tab3:
         _regime_prob = _summary["regime_probability"]
 
         _REGIME_ICON = {
-            "calm": "🟢", "elevated": "🟡",
-            "mild_stress": "🟠", "crisis": "🔴", "unknown": "⚪",
+            "calm": "", "elevated": "",
+            "mild_stress": "", "crisis": "", "unknown": "",
         }
-        _icon = _REGIME_ICON.get(_regime, "⚪")
+        _icon = _REGIME_ICON.get(_regime, "")
 
         col_regime, col_models = st.columns([1, 2])
         with col_regime:
@@ -750,7 +750,7 @@ with tab3:
             # Run notes
             if _res.warnings:
                 with st.expander(
-                    f"ℹ️ {len(_res.warnings)} scenario note(s)", expanded=False
+                    f"{len(_res.warnings)} scenario note(s)", expanded=False
                 ):
                     for _w in _res.warnings:
                         st.info(_w)
@@ -1220,7 +1220,7 @@ with tab4:
 
                 if _mr.warnings:
                     with st.expander(
-                        f"ℹ️ {len(_mr.warnings)} warning(s)", expanded=False
+                        f"{len(_mr.warnings)} warning(s)", expanded=False
                     ):
                         for _mw in _mr.warnings:
                             st.warning(_mw)
@@ -1515,13 +1515,12 @@ with tab5:
             st.plotly_chart(_cn_fig, width="stretch")
 
     st.markdown("---")
-    st.subheader("Sector Regime-Correlation Overlay (stretch)")
+    st.subheader("Sector Regime-Correlation Overlay Network")
     st.markdown(
         "Sector-supernode network under a calm-regime vs. crisis-regime "
         "correlation matrix, side by side — shows correlations tightening "
         "under stress, as DCC-GARCH/HMM regime-conditioning models it. Uses "
-        "the same rendering engine as the ticker network above; an "
-        "additional mode, not a replacement for it."
+        "the same rendering engine as the ticker network above"
     )
 
     _reg_engine = st.session_state.get("ss_engine")
