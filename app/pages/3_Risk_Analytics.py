@@ -32,21 +32,49 @@ prices = data['prices']
 if 'optimization_result' in st.session_state and st.session_state.optimization_result:
     # Use optimized weights
     weights = st.session_state.optimization_result['weights']
-    portfolio_returns = (returns * weights).sum(axis=1)
-    st.info(f"Analyzing **optimized portfolio** with {(weights > 0.001).sum()} positions")
+    _banner_label = "optimized portfolio"
 elif 'current_portfolio_weights' in st.session_state and st.session_state.current_portfolio_weights is not None:
     # Use actual holdings weights
     weights = st.session_state.current_portfolio_weights
-    portfolio_returns = (returns * weights).sum(axis=1)
-    st.info(f"Analyzing **your current holdings** with {len(weights)} positions")
+    _banner_label = "your current holdings"
 else:
     # Equal weight fallback
     weights = pd.Series(1/len(returns.columns), index=returns.columns)
-    portfolio_returns = returns.mean(axis=1)
+    _banner_label = None
+
+# Single source of truth for "which tickers are we analyzing". `weights` can
+# be longer than the tickers `returns`/`prices` actually have data for: when
+# a holding's price fetch fails validation, HoldingsTracker still emits a
+# zero-weight row for it (src/portfolio/holdings.py::get_holdings_dataframe()
+# iterates every entered ticker regardless of whether a price was found), so
+# current_portfolio_weights can carry phantom entries with no return data.
+# Restrict weights/returns/prices to their common tickers here so the
+# banner's position count and the Performance Ratios table's row count below
+# are always computed from the same holdings, instead of two objects
+# (`weights` vs `returns.columns`) that could silently diverge.
+_analyzed_tickers = [t for t in weights.index if t in returns.columns]
+weights = weights.reindex(_analyzed_tickers)
+returns = returns[_analyzed_tickers]
+prices = prices[_analyzed_tickers]
+portfolio_returns = (returns * weights).sum(axis=1)
+
+if _banner_label is not None:
+    st.info(f"Analyzing **{_banner_label}** with {len(_analyzed_tickers)} positions")
+else:
     st.warning("Using equal-weight portfolio. Enter holdings in Portfolio Input or run optimization for accurate analysis.")
 
+# Shared Sharpe-ratio parameters. Both the portfolio-level Sharpe below and
+# every per-ticker Sharpe/Sortino/Calmar in the Performance Ratios table
+# (computed via RiskMetrics) must use the same risk-free rate and
+# annualization frequency, or they silently diverge — this was Bug 2:
+# RiskMetrics(returns) used to fall back to its own hardcoded
+# risk_free_rate=0.02 default regardless of the user's configured rate,
+# while the portfolio-level Sharpe below read the real setting.
+_rf = st.session_state.get('settings', {}).get('risk_free_rate', 0.02)
+_frequency = 252
+
 # Initialize calculators
-rm = RiskMetrics(returns)
+rm = RiskMetrics(returns, risk_free_rate=_rf, frequency=_frequency)
 var_calc = VaRCalculator(returns)
 
 st.markdown("---")
@@ -57,15 +85,14 @@ st.subheader("Key Risk Metrics")
 col1, col2, col3, col4 = st.columns(4)
 
 # Calculate metrics
-annual_vol = returns.std() * np.sqrt(252)
+annual_vol = returns.std() * np.sqrt(_frequency)
 sharpe = rm.sharpe_ratio()
 max_dd = rm.max_drawdown(prices)
 var_95 = var_calc.historical_var(0.95)
 
 # Portfolio metrics
-_rf = st.session_state.get('settings', {}).get('risk_free_rate', 0.02)
-port_vol = portfolio_returns.std() * np.sqrt(252)
-port_sharpe = (portfolio_returns.mean() * 252 - _rf) / port_vol if port_vol > 0 else 0.0
+port_vol = portfolio_returns.std() * np.sqrt(_frequency)
+port_sharpe = (portfolio_returns.mean() * _frequency - _rf) / port_vol if port_vol > 0 else 0.0
 port_prices = (1 + portfolio_returns).cumprod()
 port_mdd = (port_prices / port_prices.cummax() - 1).min()
 
