@@ -17,12 +17,10 @@ For internals — module-by-module design detail, formulas, and the reasoning be
 Copy `.env.example` to `.env` and fill in your keys:
 
 ```env
-ALPHA_VANTAGE_KEY=your_key_here
-TWELVE_DATA_KEY=your_key_here
-FMP_KEY=your_key_here
+LSEG_APP_KEY=your_lseg_app_key_here
 ```
 
-yfinance (the primary data source) works without any key. The other sources are fallbacks used only if yfinance fails. Macro data additionally benefits from a Trading Economics key (`TE_API_KEY`) and a FRED key (`FRED_API_KEY`) — both optional, with reduced coverage if omitted.
+LSEG Data Library is the primary price source; yfinance is the only fallback and works without any key, so the app runs with zero configuration if you don't have LSEG access — `DataManager` automatically falls back to yfinance if no LSEG session/app key is configured or a fetch fails. Macro data additionally benefits from a Trading Economics key (`TE_API_KEY`) and a FRED key (`FRED_API_KEY`) — both optional, with reduced coverage if omitted.
 
 ### 2. Install dependencies
 
@@ -52,7 +50,7 @@ No separate lint config is checked in; `python -m py_compile $(git ls-files '*.p
 
 | Capability | Description |
 |---|---|
-| Data Ingestion | Multi-source fallback: yfinance → Alpha Vantage → Twelve Data → FMP, with disk caching |
+| Data Ingestion | LSEG Data Library (primary) → yfinance (fallback), with disk caching |
 | Portfolio Input | Holdings entry (tickers + shares) or manual ticker list; diversity metrics (HHI, Gini, effective stocks); Presets tab (save/load/rename named portfolio snapshots) |
 | Historical Stress Testing | 7 crisis scenarios replayed with actual per-stock returns; beta-scaled proxy for stocks that predate the event |
 | Sector Shock Stress Test | Per-stock sector-relative beta (ETF OLS with circularity correction); DCC-GARCH dynamic correlations; Student-t copula tail dependence; HMM regime-conditioned correlation selection |
