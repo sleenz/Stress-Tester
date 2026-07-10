@@ -71,6 +71,7 @@ port_mdd = (port_prices / port_prices.cummax() - 1).min()
 
 with col1:
     st.metric("Portfolio Volatility", f"{port_vol*100:.2f}%")
+    st.caption("Full-period stat — will differ from the rolling/EWMA charts below during volatile sub-periods.")
 with col2:
     st.metric("Sharpe Ratio", f"{port_sharpe:.3f}")
 with col3:
