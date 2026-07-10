@@ -1,9 +1,5 @@
 # Bahana Stress Tester
 
-A scoped fork of PortfolioOptimizer, built for Bahana TCW: **Portfolio Input + Stress Testing + Risk Analytics.** Multi-source price ingestion, historical crisis replay, DCC-GARCH/Student-t-copula/HMM-regime sector shock propagation, Leontief macro contagion, and a baseline VaR/Sharpe/GARCH risk dashboard — with meaningful support for both US equities and the Indonesian market (IDX, `.JK` tickers).
-
-Optimization, Portfolio Builder, Factor Analysis, Reports, and Stock Valuation are **out of scope** for this fork and have been removed. Risk Analytics was originally a documented Phase 6 fast-follow with its backing modules (`src/risk/metrics.py`, `var.py`, `garch.py`) kept dormant in the tree rather than deleted — Phase 6 has since restored `3_Risk_Analytics.py` against them, so they're active now, not dormant. `src/portfolio_builder/network.py` is likewise now active as a Correlation Network tab on Stress Testing, with two sections: (7a) a ticker-level MST colored by real per-ticker P&L from a selected Historical or Sector Shock scenario — Macro Contagion is deliberately not offered as a P&L source there (see CLAUDE.md for why) — and (7b) a sector-supernode calm-vs-crisis regime-correlation overlay driven by the fitted Sector Shock engine's DCC-GARCH/HMM models.
-
 > **Disclaimer:** This tool is a calculation-assistance aid. It is not intended as the sole basis for financial decisions. Always do your own research (DYOR).
 
 For internals — module-by-module design detail, formulas, and the reasoning behind non-obvious choices — see [`docs/architecture.md`](docs/architecture.md). That document (and its companion [`CLAUDE.md`](CLAUDE.md)) is aimed at whoever is next modifying the code; this README is aimed at getting the app running. The build/production-readiness plan this fork is being executed against lives at [`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md).
@@ -98,12 +94,4 @@ Stress-Tester/
 +-- README.md                             # This file
 ```
 
-Removed entirely (not dormant): `src/optimization/`, `src/factors/`, `src/reports/`, `src/valuation/`, `src/portfolio/calculator.py`, `src/portfolio/rebalancer.py`, `src/portfolio_builder/{fetch,ranking,metrics,heat_color,ff5_overlay}.py`, and six out-of-scope pages (`2_Optimization.py`, `5_Monitoring.py`, `6_Factor_Analysis.py`, `7_Reports.py`, `8_Stock_Valuation.py`, `10_Portfolio_Builder.py`). `3_Risk_Analytics.py` was deleted in the initial trim and restored in Phase 6 — it is active, not removed.
-
 If you're importing from `src/portfolio_builder/cache.py` and hit something unexpected: it's kept in place on purpose (a `network.py` type-annotation dependency), not dead code, even though nothing calls its `run_nightly_refresh()`/SQLite-cache path.
-
----
-
-## License / Contributing
-
-No license file is present in this repository as of this writing — confirm usage terms with the repository owner before redistributing.
