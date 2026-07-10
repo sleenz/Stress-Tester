@@ -1401,14 +1401,6 @@ def _render_correlation_network(graph, mst_edges: set, title: str, node_colors: 
 
 with tab5:
     st.subheader("Correlation Network")
-    st.markdown(
-        "Ticker-level correlation network (Minimum Spanning Tree), colored by "
-        "each holding's real P&L under a selected stress scenario. This is a "
-        "**static companion view** built from plain pairwise correlation on "
-        "the price data already loaded above — independent of the DCC-GARCH/"
-        "copula correlation logic the Sector Shock tab uses, not a replacement "
-        "for it."
-    )
 
     _cn_tickers = list(returns.columns)
     _cn_weights = {t: float(w) for t, w in zip(_cn_tickers, weights)}
@@ -1446,10 +1438,7 @@ with tab5:
         )
     else:
         st.caption(
-            "Macro Contagion scenarios aren't offered here: Leontief propagates "
-            "distress at sector level only, so every ticker in the same sector "
-            "would get an identical, non-differentiated number, not real "
-            "per-ticker P&L."
+            "Macro Contagion scenarios aren't offered here"
         )
 
         _cn_scenario_label = st.selectbox(
@@ -1524,16 +1513,6 @@ with tab5:
                 _cn_node_colors, _cn_node_sizes, _cn_hover,
             )
             st.plotly_chart(_cn_fig, width="stretch")
-            st.caption(
-                "Node color: green = top-third P&L under this scenario, orange = "
-                "middle third, red = bottom third (same tri-tier convention a ranked "
-                "list would use). Node size ∝ portfolio weight. Edge color: full "
-                "Turbo gradient by correlation strength (purple/blue = -1, green = 0, "
-                "orange/red = +1 — see the colorbar) — hover an edge for its exact "
-                "correlation. All edges are solid; thick = Minimum Spanning Tree "
-                "(always drawn, guarantees connectivity), thin = additional pairs "
-                "clearing the threshold above."
-            )
 
     st.markdown("---")
     st.subheader("Sector Regime-Correlation Overlay (stretch)")
@@ -1634,19 +1613,6 @@ with tab5:
                     _reg_node_colors, _reg_node_sizes, _reg_hover,
                 )
                 st.plotly_chart(_reg_fig, width="stretch")
-
-        st.caption(
-            "Every sector pair is shown (a complete graph, not a Minimum "
-            "Spanning Tree) — with only a handful of sectors, all pairwise "
-            "correlations fit legibly. Edge color: full Turbo gradient by "
-            "correlation strength (purple/blue = -1, green = 0, orange/red = "
-            "+1 — see the colorbar) — hover an edge for its exact correlation. "
-            "All edges are solid. Node size ∝ portfolio weight aggregated to "
-            "that sector. Compare the two panels — tighter, more orange/red "
-            "(positive-correlated) edges under crisis vs. calm is the "
-            "regime-conditioning effect this overlay is meant to surface, "
-            "unless a warning above says otherwise."
-        )
 
 
 # ── Hedging Effectiveness During Stress Events ────────────────────────────────

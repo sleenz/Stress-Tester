@@ -148,23 +148,6 @@ if "settings" not in st.session_state:
     if saved["portfolio"]["tickers"] and "tickers" not in st.session_state:
         st.session_state.tickers = saved["portfolio"]["tickers"]
 
-# Footer
-st.markdown("---")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("**Data Sources**")
-    st.caption("Yahoo Finance, Alpha Vantage, Twelve Data, FMP, FRED, Trading Economics")
-
-with col2:
-    st.markdown("**Technologies**")
-    st.caption("Python, Streamlit, Plotly, SciPy, arch, hmmlearn")
-
-with col3:
-    st.markdown("**Version**")
-    st.caption("Bahana Stress Tester 1.0.0")
-
-
 def main():
     """Main function for CLI entry point."""
     import subprocess
