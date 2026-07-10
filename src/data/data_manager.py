@@ -8,10 +8,8 @@ from tqdm import tqdm
 from .cache import DataCache
 from .sources import (
     BaseDataSource,
+    LSEGSource,
     YFinanceSource,
-    AlphaVantageSource,
-    TwelveDataSource,
-    FMPSource,
     DataSourceError,
     RateLimitError,
 )
@@ -51,12 +49,13 @@ class DataManager:
         self.enable_cache = enable_cache
         self.show_progress = show_progress
 
-        # Initialize data sources in priority order
+        # Initialize data sources in priority order: LSEG (primary) with
+        # yfinance as the only fallback. LSEGSource marks itself unavailable
+        # when the lseg-data package isn't installed or no session can be
+        # opened, so this degrades to yfinance-only automatically.
         self.sources: List[BaseDataSource] = [
+            LSEGSource(),
             YFinanceSource(),
-            AlphaVantageSource(),
-            TwelveDataSource(),
-            FMPSource(),
         ]
 
         logger.info(f"DataManager initialized with {len(self.sources)} data sources")

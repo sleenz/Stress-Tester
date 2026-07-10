@@ -4,6 +4,11 @@ numpy>=1.24.0
 scipy>=1.10.0
 
 # Financial Data
+# LSEG Data Library is the primary price source (DataManager tries it first);
+# yfinance is the only fallback (used automatically if no LSEG session/app key
+# is configured, or if the fetch fails) — also still used directly for TRBC
+# sector lookups' fallback path in lseg_sectors.py.
+lseg-data>=2.0.0
 yfinance>=0.2.40
 pandas_datareader>=0.10.0
 requests>=2.31.0
@@ -11,9 +16,6 @@ requests>=2.31.0
 # Risk & Volatility (DCC-GARCH, Student-t copula, HMM regime detection)
 arch>=6.3.0
 hmmlearn>=0.3.3
-
-# Optional: LSEG Data Library (required for TRBC sector lookups; yfinance fallback used otherwise)
-# lseg-data>=2.0.0
 
 # Machine Learning (macro sensitivity regression, contagion network, stock-sector beta OLS)
 scikit-learn>=1.3.0

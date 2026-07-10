@@ -385,6 +385,69 @@ previously rendered as barely-visible pale lines under RdBu_r.
 
 ---
 
+## POST-PHASE-7 — Data source consolidation: LSEG primary, yfinance-only fallback — DONE
+
+Explicit user directive, independent of the phase sequence above: add
+LSEG Data Library as the primary price data source, keep yfinance as the
+only fallback, and delete the other fallback sources outright.
+
+1. **Added `LSEGSource` to `src/data/sources.py`** — calls
+   `lseg.data.get_history(universe=tickers, fields=["TRDPRC_1"],
+   interval="daily", adjustments=["CCH","CRE","RTS","RPO"])`. Requesting
+   a single field is deliberate, not arbitrary: the library only builds a
+   `(ticker, field)` column MultiIndex when *multiple* fields are
+   requested (confirmed by reading
+   `lseg/data/_access_layer/_history_df_builder.py` directly against an
+   installed copy of the package) — a single-field request returns a
+   flat, ticker-named-column DataFrame, the same shape every other
+   source in this file already produces, with no extra reshaping code
+   needed. Session credentials come from `LSEG_APP_KEY` (env var) or the
+   library's own `lseg-data.config.json` discovery, opened lazily on
+   first use via `_ensure_session()`.
+2. **Deleted `AlphaVantageSource`, `TwelveDataSource`, `FMPSource`** from
+   `sources.py` entirely (not deprecated-in-place) — `DataManager`
+   (`data_manager.py:54-58`) now only ever constructs
+   `[LSEGSource(), YFinanceSource()]`.
+3. **`requirements.txt`**: `lseg-data>=2.0.0` promoted from the
+   commented-out optional line to a real dependency (it now backs a
+   primary price source, not just the optional TRBC sector lookup in
+   `lseg_sectors.py`).
+4. **`.env.example` created** (didn't previously exist despite the README
+   referencing it — see below) with `LSEG_APP_KEY` plus the pre-existing
+   `TE_API_KEY`/`FRED_API_KEY`/cache/log env vars; `ALPHA_VANTAGE_KEY`/
+   `TWELVE_DATA_KEY`/`FMP_KEY` removed.
+5. **README.md, docs/architecture.md, CLAUDE.md updated** to describe the
+   two-source LSEG→yfinance chain in place of the old four-source one —
+   see CLAUDE.md's Load-bearing decisions entry on `LSEGSource` for the
+   full design rationale and the sandbox-verified fallback behavior.
+
+Verified: `python -m py_compile` clean on `sources.py`/`data_manager.py`.
+End-to-end fallback behavior confirmed live in a sandbox with the real
+`lseg-data` package installed but no credentials/session configured (the
+expected state in most deployments, since LSEG access is a paid,
+credential-gated product): `DataManager.get_price_data()` logs
+`Attempting to fetch from LSEG` → `LSEG` fails gracefully (no session) →
+`Attempting to fetch from YFinance` → both fail only because this
+sandbox has no outbound network route to either provider's servers, an
+environment limitation confirmed separately, not a code defect. The
+control-flow path (try LSEG, catch `DataSourceError`, fall through to
+yfinance, never crash) is exactly what was verified, independent of
+real network reachability.
+
+Known gap, not yet fixed: `_ensure_session()`'s try/except does not
+catch every LSEG failure mode — `ld.open_session()` does not raise when
+no local Workspace/Eikon proxy is reachable, it silently returns a
+non-connected session, so `self.mark_unavailable()` is never called in
+that case. The outer `fetch_prices()`/`DataManager.get_price_data()`
+exception handling still catches the resulting failure correctly on
+every call and falls through to yfinance, so the fallback itself is not
+broken — but an unconfigured LSEG session gets retried on every single
+`get_price_data()` call rather than being marked permanently unavailable
+after the first failure. Functionally fine; worth revisiting only if
+fetch latency from the repeated failed attempt becomes a concern.
+
+---
+
 **Delivery note:** save this file at the repo root (or `docs/`) and
 reference it from `CLAUDE.md` rather than re-pasting it fresh each
 session — Claude Code will pick it up as persistent project context, and
