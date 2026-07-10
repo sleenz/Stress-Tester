@@ -25,6 +25,18 @@ load_dotenv()
 
 logger = get_logger(__name__)
 
+# LSEG Data Library is an optional, credential-gated dependency (same pattern
+# as lseg_sectors.py) — its absence or an un-opened session must degrade to
+# the yfinance fallback, never crash DataManager's source loop.
+try:
+    import lseg.data as ld
+    from lseg.data.errors import LDError
+    _LSEG_AVAILABLE = True
+except ImportError:
+    ld = None
+    LDError = Exception
+    _LSEG_AVAILABLE = False
+
 
 class DataSourceError(Exception):
     """Custom exception for data source errors."""
@@ -78,6 +90,139 @@ class BaseDataSource(ABC):
         """Mark this source as unavailable."""
         self._is_available = False
         logger.warning(f"{self.name} marked as unavailable")
+
+
+class LSEGSource(BaseDataSource):
+    """
+    Refinitiv/LSEG Data Library price source (primary).
+
+    Uses `lseg.data.get_history()` with the single field "TRDPRC_1" (the
+    platform's default trade/last price), which returns a flat
+    date-indexed DataFrame whose columns are the requested RICs directly
+    (LSEG only builds a (ticker, field) MultiIndex when *multiple* fields
+    are requested — see `lseg/data/content/_historical_df_builder.py`).
+    `adjustments` requests the four CORAX corporate-action codes so
+    splits/dividends are reflected, mirroring `auto_adjust=True` on the
+    yfinance fallback below.
+
+    Requires a configured session (a `lseg-data.config.json` discovered
+    via the `LD_LIB_CONFIG_PATH` env var / cwd, or an app key passed
+    directly). Neither is available in most deployments of this app, so
+    this source is expected to mark itself unavailable and let
+    `DataManager` fall through to `YFinanceSource` — that fallback is the
+    normal path, not an error state.
+    """
+
+    def __init__(self, batch_size: int = 50, app_key: str = None):
+        """
+        Initialize the LSEG source.
+
+        Args:
+            batch_size: Number of tickers to request per get_history() call
+            app_key: LSEG/Refinitiv app key (or from env var LSEG_APP_KEY;
+                falls back to the library's own config-file discovery if unset)
+        """
+        super().__init__("LSEG")
+        self.batch_size = batch_size
+        self.app_key = app_key or os.getenv("LSEG_APP_KEY")
+        self._session_opened = False
+
+        if not _LSEG_AVAILABLE:
+            logger.warning(
+                "lseg.data is not installed. LSEG price source will be skipped. "
+                "Install with: pip install lseg-data>=2.0.0"
+            )
+            self._is_available = False
+
+    def _ensure_session(self) -> None:
+        """Open an LSEG session on first use; mark unavailable if it can't open."""
+        if self._session_opened:
+            return
+
+        try:
+            if self.app_key:
+                ld.open_session(app_key=self.app_key)
+            else:
+                ld.open_session()
+            self._session_opened = True
+        except Exception as e:
+            logger.warning(f"LSEG session could not be opened, falling back: {e}")
+            self.mark_unavailable()
+            raise DataSourceError(f"LSEG session unavailable: {e}")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        reraise=True,
+    )
+    def _fetch_batch(
+        self,
+        tickers: List[str],
+        start_date: datetime,
+        end_date: datetime,
+    ) -> pd.DataFrame:
+        """Fetch a batch of tickers via get_history() with retry logic."""
+        try:
+            df = ld.get_history(
+                universe=tickers,
+                fields=["TRDPRC_1"],
+                interval="daily",
+                start=start_date.strftime("%Y-%m-%d"),
+                end=end_date.strftime("%Y-%m-%d"),
+                adjustments=["CCH", "CRE", "RTS", "RPO"],
+            )
+        except LDError as e:
+            raise DataSourceError(f"LSEG get_history failed for {tickers}: {e}") from e
+
+        if df is None or df.empty:
+            raise DataSourceError(f"No data returned for {tickers}")
+
+        return df
+
+    def fetch_prices(
+        self,
+        tickers: List[str],
+        start_date: datetime,
+        end_date: datetime,
+    ) -> pd.DataFrame:
+        """
+        Fetch price data from the LSEG Data Library.
+
+        Args:
+            tickers: List of ticker symbols (RICs)
+            start_date: Start date for data
+            end_date: End date for data
+
+        Returns:
+            DataFrame with closing prices
+        """
+        if not self._is_available:
+            raise DataSourceError(f"{self.name} is not available (not installed/configured)")
+
+        logger.info(f"Fetching {len(tickers)} tickers from {self.name}")
+        self._ensure_session()
+
+        all_data = []
+        batches = chunk_list(tickers, self.batch_size)
+
+        for i, batch in enumerate(batches):
+            try:
+                logger.debug(f"Fetching batch {i+1}/{len(batches)}: {batch}")
+                batch_data = self._fetch_batch(batch, start_date, end_date)
+                all_data.append(batch_data)
+
+            except Exception as e:
+                logger.error(f"Error fetching batch {batch} from {self.name}: {e}")
+                continue
+
+        if not all_data:
+            raise DataSourceError(f"Failed to fetch any data from {self.name}")
+
+        result = pd.concat(all_data, axis=1)
+        logger.info(f"Successfully fetched {len(result.columns)} tickers from {self.name}")
+
+        return result
 
 
 class YFinanceSource(BaseDataSource):
@@ -180,342 +325,3 @@ class YFinanceSource(BaseDataSource):
 
         return result
 
-
-class AlphaVantageSource(BaseDataSource):
-    """Alpha Vantage data source."""
-
-    def __init__(self, api_key: str = None):
-        """
-        Initialize Alpha Vantage source.
-
-        Args:
-            api_key: Alpha Vantage API key (or from env)
-        """
-        super().__init__("AlphaVantage")
-        self.api_key = api_key or os.getenv("ALPHA_VANTAGE_KEY")
-        self.base_url = "https://www.alphavantage.co/query"
-
-        if not self.api_key or self.api_key == "your_alpha_vantage_key_here":
-            logger.warning("Alpha Vantage API key not configured")
-            self._is_available = False
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-        retry=retry_if_exception_type((requests.RequestException, ConnectionError)),
-        reraise=True,
-    )
-    def _fetch_single(self, ticker: str, outputsize: str = "full") -> pd.DataFrame:
-        """Fetch data for a single ticker."""
-        params = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": ticker,
-            "outputsize": outputsize,
-            "apikey": self.api_key,
-        }
-
-        response = requests.get(self.base_url, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
-
-        # Check for error messages
-        if "Error Message" in data:
-            raise DataSourceError(f"Alpha Vantage error: {data['Error Message']}")
-
-        if "Note" in data:
-            # Rate limit hit
-            raise RateLimitError(f"Alpha Vantage rate limit: {data['Note']}")
-
-        if "Time Series (Daily)" not in data:
-            raise DataSourceError(f"Unexpected response format for {ticker}")
-
-        # Parse time series data
-        ts_data = data["Time Series (Daily)"]
-        df = pd.DataFrame.from_dict(ts_data, orient="index")
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index()
-
-        # Get adjusted close price
-        close_col = "5. adjusted close"
-        if close_col not in df.columns:
-            close_col = "4. close"
-
-        return df[[close_col]].astype(float).rename(columns={close_col: ticker})
-
-    def fetch_prices(
-        self,
-        tickers: List[str],
-        start_date: datetime,
-        end_date: datetime,
-    ) -> pd.DataFrame:
-        """
-        Fetch price data from Alpha Vantage.
-
-        Args:
-            tickers: List of ticker symbols
-            start_date: Start date for data
-            end_date: End date for data
-
-        Returns:
-            DataFrame with closing prices
-        """
-        if not self._is_available:
-            raise DataSourceError(f"{self.name} is not available (no API key)")
-
-        logger.info(f"Fetching {len(tickers)} tickers from {self.name}")
-
-        all_data = []
-
-        for ticker in tickers:
-            try:
-                logger.debug(f"Fetching {ticker} from {self.name}")
-                ticker_data = self._fetch_single(ticker)
-
-                # Filter date range
-                ticker_data = ticker_data[
-                    (ticker_data.index >= pd.to_datetime(start_date)) &
-                    (ticker_data.index <= pd.to_datetime(end_date))
-                ]
-
-                all_data.append(ticker_data)
-
-                # Respect rate limits (5 calls per minute for free tier)
-                time.sleep(12)  # 12 seconds between calls
-
-            except RateLimitError as e:
-                logger.warning(f"Rate limit hit for {self.name}: {e}")
-                self.mark_unavailable()
-                raise
-            except Exception as e:
-                logger.error(f"Error fetching {ticker} from {self.name}: {e}")
-                continue
-
-        if not all_data:
-            raise DataSourceError(f"Failed to fetch any data from {self.name}")
-
-        result = pd.concat(all_data, axis=1)
-        logger.info(f"Successfully fetched {len(result.columns)} tickers from {self.name}")
-
-        return result
-
-
-class TwelveDataSource(BaseDataSource):
-    """Twelve Data API source."""
-
-    def __init__(self, api_key: str = None):
-        """
-        Initialize Twelve Data source.
-
-        Args:
-            api_key: Twelve Data API key (or from env)
-        """
-        super().__init__("TwelveData")
-        self.api_key = api_key or os.getenv("TWELVE_DATA_KEY")
-        self.base_url = "https://api.twelvedata.com/time_series"
-
-        if not self.api_key or self.api_key == "your_twelve_data_key_here":
-            logger.warning("Twelve Data API key not configured")
-            self._is_available = False
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-        retry=retry_if_exception_type((requests.RequestException, ConnectionError)),
-        reraise=True,
-    )
-    def _fetch_single(
-        self,
-        ticker: str,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> pd.DataFrame:
-        """Fetch data for a single ticker."""
-        params = {
-            "symbol": ticker,
-            "interval": "1day",
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d"),
-            "apikey": self.api_key,
-        }
-
-        response = requests.get(self.base_url, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
-
-        # Check for errors
-        if data.get("status") == "error":
-            if "API" in data.get("message", "").upper():
-                raise RateLimitError(f"Twelve Data rate limit: {data.get('message')}")
-            raise DataSourceError(f"Twelve Data error: {data.get('message')}")
-
-        if "values" not in data:
-            raise DataSourceError(f"No data returned for {ticker}")
-
-        # Parse values
-        df = pd.DataFrame(data["values"])
-        df["datetime"] = pd.to_datetime(df["datetime"])
-        df = df.set_index("datetime").sort_index()
-        df["close"] = df["close"].astype(float)
-
-        return df[["close"]].rename(columns={"close": ticker})
-
-    def fetch_prices(
-        self,
-        tickers: List[str],
-        start_date: datetime,
-        end_date: datetime,
-    ) -> pd.DataFrame:
-        """
-        Fetch price data from Twelve Data.
-
-        Args:
-            tickers: List of ticker symbols
-            start_date: Start date for data
-            end_date: End date for data
-
-        Returns:
-            DataFrame with closing prices
-        """
-        if not self._is_available:
-            raise DataSourceError(f"{self.name} is not available (no API key)")
-
-        logger.info(f"Fetching {len(tickers)} tickers from {self.name}")
-
-        all_data = []
-
-        for ticker in tickers:
-            try:
-                logger.debug(f"Fetching {ticker} from {self.name}")
-                ticker_data = self._fetch_single(ticker, start_date, end_date)
-                all_data.append(ticker_data)
-
-                # Rate limiting (8 calls per minute for free tier)
-                time.sleep(8)
-
-            except RateLimitError as e:
-                logger.warning(f"Rate limit hit for {self.name}: {e}")
-                self.mark_unavailable()
-                raise
-            except Exception as e:
-                logger.error(f"Error fetching {ticker} from {self.name}: {e}")
-                continue
-
-        if not all_data:
-            raise DataSourceError(f"Failed to fetch any data from {self.name}")
-
-        result = pd.concat(all_data, axis=1)
-        logger.info(f"Successfully fetched {len(result.columns)} tickers from {self.name}")
-
-        return result
-
-
-class FMPSource(BaseDataSource):
-    """Financial Modeling Prep data source."""
-
-    def __init__(self, api_key: str = None):
-        """
-        Initialize FMP source.
-
-        Args:
-            api_key: FMP API key (or from env)
-        """
-        super().__init__("FMP")
-        self.api_key = api_key or os.getenv("FMP_KEY")
-        self.base_url = "https://financialmodelingprep.com/api/v3"
-
-        if not self.api_key or self.api_key == "your_fmp_key_here":
-            logger.warning("FMP API key not configured")
-            self._is_available = False
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-        retry=retry_if_exception_type((requests.RequestException, ConnectionError)),
-        reraise=True,
-    )
-    def _fetch_single(
-        self,
-        ticker: str,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> pd.DataFrame:
-        """Fetch data for a single ticker."""
-        url = f"{self.base_url}/historical-price-full/{ticker}"
-        params = {
-            "from": start_date.strftime("%Y-%m-%d"),
-            "to": end_date.strftime("%Y-%m-%d"),
-            "apikey": self.api_key,
-        }
-
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
-
-        # Check for errors
-        if isinstance(data, dict) and "Error Message" in data:
-            raise DataSourceError(f"FMP error: {data['Error Message']}")
-
-        if isinstance(data, dict) and "historical" not in data:
-            raise DataSourceError(f"No historical data for {ticker}")
-
-        # Parse historical data
-        historical = data.get("historical", [])
-        if not historical:
-            raise DataSourceError(f"Empty historical data for {ticker}")
-
-        df = pd.DataFrame(historical)
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-
-        # Use adjusted close if available
-        close_col = "adjClose" if "adjClose" in df.columns else "close"
-
-        return df[[close_col]].astype(float).rename(columns={close_col: ticker})
-
-    def fetch_prices(
-        self,
-        tickers: List[str],
-        start_date: datetime,
-        end_date: datetime,
-    ) -> pd.DataFrame:
-        """
-        Fetch price data from FMP.
-
-        Args:
-            tickers: List of ticker symbols
-            start_date: Start date for data
-            end_date: End date for data
-
-        Returns:
-            DataFrame with closing prices
-        """
-        if not self._is_available:
-            raise DataSourceError(f"{self.name} is not available (no API key)")
-
-        logger.info(f"Fetching {len(tickers)} tickers from {self.name}")
-
-        all_data = []
-
-        for ticker in tickers:
-            try:
-                logger.debug(f"Fetching {ticker} from {self.name}")
-                ticker_data = self._fetch_single(ticker, start_date, end_date)
-                all_data.append(ticker_data)
-
-                # Rate limiting
-                time.sleep(0.5)
-
-            except Exception as e:
-                logger.error(f"Error fetching {ticker} from {self.name}: {e}")
-                continue
-
-        if not all_data:
-            raise DataSourceError(f"Failed to fetch any data from {self.name}")
-
-        result = pd.concat(all_data, axis=1)
-        logger.info(f"Successfully fetched {len(result.columns)} tickers from {self.name}")
-
-        return result
