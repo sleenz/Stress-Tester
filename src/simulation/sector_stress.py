@@ -39,6 +39,21 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+def _strip_market_qualifier(sector: str) -> str:
+    """
+    Undo the " (US)"/" (IDX)" suffix applied upstream by
+    ``qualify_sector_by_market()`` (see ``2_Stress_Testing.py``, where
+    ``ss_sector_map`` is built) for callers that key on bare TRBC/GICS
+    labels and already resolve US-vs-IDX independently via ticker suffix —
+    namely ``compute_all_stock_betas()``'s ``SECTOR_ETF_MAP``. Sectors that
+    were never qualified (e.g. "Unknown") pass through unchanged.
+    """
+    for suffix in (" (US)", " (IDX)"):
+        if sector.endswith(suffix):
+            return sector[: -len(suffix)]
+    return sector
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Scenario definitions
 # ──────────────────────────────────────────────────────────────────────────────
@@ -156,7 +171,9 @@ DEFAULT_SCENARIOS: list[SectorStressScenario] = [
     ),
     SectorStressScenario(
         name="Telco Margin Compression",
-        shocked_sectors={"Telecommunication Services": -0.15},
+        # Market-qualified to IDX only — the scenario's own narrative names
+        # TLKM specifically; a US telecom shouldn't inherit this shock.
+        shocked_sectors={"Telecommunication Services (IDX)": -0.15},
         description=(
             "Spectrum auction cost spike, competitive tariff war, "
             "or infrastructure capex overrun. High IDX relevance: TLKM."
@@ -167,7 +184,8 @@ DEFAULT_SCENARIOS: list[SectorStressScenario] = [
     ),
     SectorStressScenario(
         name="Utility Rate Risk",
-        shocked_sectors={"Utilities": -0.20},
+        # Market-qualified to IDX only — see PGEO/PGAS/BREN in the description.
+        shocked_sectors={"Utilities (IDX)": -0.20},
         description=(
             "Rate spike reprices utilities as bond proxies. "
             "High IDX relevance: PGEO, PGAS, BREN. "
@@ -179,7 +197,8 @@ DEFAULT_SCENARIOS: list[SectorStressScenario] = [
     ),
     SectorStressScenario(
         name="FMCG Margin Squeeze",
-        shocked_sectors={"Consumer Non-Cyclicals": -0.15},
+        # Market-qualified to IDX only — driven by CPO (Indonesian palm oil).
+        shocked_sectors={"Consumer Non-Cyclicals (IDX)": -0.15},
         description=(
             "Input cost inflation erodes FMCG margins. "
             "IDX-specific driver: CPO price surge hits food manufacturers. "
@@ -191,11 +210,13 @@ DEFAULT_SCENARIOS: list[SectorStressScenario] = [
     ),
     SectorStressScenario(
         name="IDX Commodity + Currency Double Shock",
+        # Market-qualified to IDX only — this is an Indonesian rupiah/
+        # commodity scenario by name and description; not a global shock.
         shocked_sectors={
-            "Energy": -0.20,
-            "Basic Materials": -0.20,
-            "Financials": -0.10,
-            "Consumer Cyclicals": -0.08,
+            "Energy (IDX)": -0.20,
+            "Basic Materials (IDX)": -0.20,
+            "Financials (IDX)": -0.10,
+            "Consumer Cyclicals (IDX)": -0.08,
         },
         description=(
             "Rupiah weakens sharply while commodity prices fall — "
@@ -462,15 +483,22 @@ class SectorStressEngine:
                 if hasattr(returns.index[-1], "date")
                 else str(returns.index[-1])
             )
+            # compute_all_stock_betas()'s SECTOR_ETF_MAP is keyed on bare
+            # TRBC/GICS labels and already resolves US-vs-IDX independently
+            # via ticker suffix — strip the " (US)"/" (IDX)" qualifier
+            # self._sector_map may carry so its ETF lookup still succeeds.
+            _bare_sector_map = {
+                t: _strip_market_qualifier(s) for t, s in self._sector_map.items()
+            }
             logger.debug(
                 f"  [1b] compute_all_stock_betas: "
                 f"tickers={list(returns.columns)}, "
                 f"date_range={_start}→{_end}, "
-                f"sector_map={self._sector_map}"
+                f"sector_map={_bare_sector_map}"
             )
             self._stock_betas = compute_all_stock_betas(
                 tickers=list(returns.columns),
-                sector_map=self._sector_map,
+                sector_map=_bare_sector_map,
                 stock_returns=returns,
                 start_date=_start,
                 end_date=_end,
@@ -595,12 +623,26 @@ class SectorStressEngine:
             sectors = self._beta_result.sectors
         else:
             sectors = list(set(self._sector_map.values()))
-        matched_shocks: dict[str, float] = {
-            sec: shock
-            for sec, shock in scenario.shocked_sectors.items()
-            if sec in sectors
-        }
-        unmatched = [s for s in scenario.shocked_sectors if s not in sectors]
+        # sectors may be market-qualified (e.g. "Technology (US)",
+        # "Technology (IDX)") when fed by a sector_map that ran through
+        # qualify_sector_by_market(). A scenario's shocked_sectors key
+        # either matches exactly (already market-qualified, e.g. the IDX-
+        # specific default scenarios) or is a bare label that should
+        # broadcast the same shock magnitude to every market-qualified
+        # variant actually present, so a mixed US/IDX portfolio doesn't
+        # silently skip half its holdings under a globally-worded scenario.
+        matched_shocks: dict[str, float] = {}
+        unmatched: list[str] = []
+        for sec, shock in scenario.shocked_sectors.items():
+            if sec in sectors:
+                matched_shocks[sec] = shock
+                continue
+            variants = [s for s in sectors if s.startswith(f"{sec} (") and s.endswith(")")]
+            if variants:
+                for v in variants:
+                    matched_shocks[v] = shock
+            else:
+                unmatched.append(sec)
         if unmatched:
             run_warnings.append(
                 f"Scenario '{scenario.name}': sectors not found in fitted data "

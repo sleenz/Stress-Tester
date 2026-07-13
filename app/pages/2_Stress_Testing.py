@@ -29,6 +29,7 @@ from src.risk.copula import CopulaConfig
 from src.risk.regime_detection import RegimeConfig
 from src.risk.sector_beta import SectorBetaConfig
 from src.data.data_manager import DataManager
+from src.data.lseg_sectors import qualify_sector_by_market
 from src.portfolio_builder.network import (
     NetworkConfig,
     CorrelationNetworkConfig,
@@ -115,10 +116,11 @@ with tab1:
 
             st.dataframe(
                 _summary_df.style.format({
-                    "Index Return": "{:.1%}",
+                    "US Index Return": "{:.1%}",
+                    "IDX Index Return": "{:.1%}",
                     "Portfolio Return": "{:.1%}",
                     "Portfolio P&L": "${:,.0f}",
-                }).background_gradient(subset=["Portfolio Return"], cmap="RdYlGn"),
+                }, na_rep="—").background_gradient(subset=["Portfolio Return"], cmap="RdYlGn"),
                 width="stretch",
             )
 
@@ -135,9 +137,14 @@ with tab1:
                 _res = _actual_results[_sel_scenario]
                 _bd = _stressor.to_stock_breakdown(_res)
 
+                _idx_parts = []
+                if "^GSPC" in _res.index_returns:
+                    _idx_parts.append(f"US (^GSPC): {_res.index_returns['^GSPC']:.1%}")
+                if "^JKSE" in _res.index_returns:
+                    _idx_parts.append(f"IDX (^JKSE): {_res.index_returns['^JKSE']:.1%}")
+                _idx_caption = " | ".join(_idx_parts) if _idx_parts else "Index: unavailable"
                 st.caption(
-                    f"Index ({_res.scenario.market_index}): "
-                    f"{_res.index_return:.1%} | "
+                    f"{_idx_caption} | "
                     f"Portfolio: {_res.portfolio_return:.1%} | "
                     f"Actual data: {_res.n_actual}/{_res.n_actual + _res.n_beta_scaled} stocks"
                 )
@@ -408,6 +415,11 @@ with tab3:
                     _tickers,
                     level=str(st.session_state.ss_class_level),
                 )
+                # Market-qualify sector labels (e.g. "Financials (US)" vs.
+                # "Financials (IDX)") so US and Indonesian holdings never get
+                # blended into one sector return series downstream — they
+                # respond to different rate regimes and macro drivers.
+                _sector_map = qualify_sector_by_market(_sector_map)
                 st.session_state.ss_sector_map = _sector_map
                 st.session_state.ss_class_level_used = st.session_state.ss_class_level
                 unique_s = sorted(set(_sector_map.values()) - {"Unknown"})

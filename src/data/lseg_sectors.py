@@ -95,6 +95,42 @@ def normalize_sector_label(
         return sector   # yfinance already returns GICS
 
 
+def qualify_sector_by_market(sector_map: dict[str, str]) -> dict[str, str]:
+    """
+    Suffix each sector label with its ticker's home market: " (US)" or " (IDX)".
+
+    Prevents downstream sector-level aggregation (SectorBetaAnalyzer,
+    DCC-GARCH, macro sensitivity) from blending US and Indonesian holdings
+    that happen to share a TRBC/GICS label — e.g. JPM and BBCA.JK are both
+    "Financials" but respond to different rate regimes (Fed vs. BI policy)
+    and different macro drivers, and should never be averaged into one
+    sector return series.
+
+    "Unknown" sector labels pass through unqualified — there's no per-market
+    distinction to draw for an unclassified ticker.
+
+    Parameters
+    ----------
+    sector_map : dict[str, str]
+        {ticker: sector_label}, as returned by
+        DataManager.get_sector_classifications().
+
+    Returns
+    -------
+    dict[str, str]
+        {ticker: "sector_label (US)"} or {ticker: "sector_label (IDX)"};
+        "Unknown" entries unchanged.
+    """
+    qualified: dict[str, str] = {}
+    for ticker, sector in sector_map.items():
+        if sector == "Unknown":
+            qualified[ticker] = sector
+            continue
+        market = "IDX" if ticker.upper().endswith(".JK") else "US"
+        qualified[ticker] = f"{sector} ({market})"
+    return qualified
+
+
 class LSEGConnectionError(RuntimeError):
     """Raised when LSEG Data Library is unavailable and fallback is disabled."""
 
