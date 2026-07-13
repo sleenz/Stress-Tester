@@ -2,7 +2,8 @@
 Macro variable data fetcher for the Leontief contagion model.
 
 Fetches DXY, VIX, US Treasury yield, Bank Indonesia rate, IDR/USD,
-China PMI, palm oil, coal, and nickel from yfinance and FRED with
+China PMI, palm oil, coal, and nickel from Trading Economics (primary),
+with yfinance and the LSEG Data Library as per-variable fallbacks,
 automatic fallback, per-variable caching, and graceful degradation.
 """
 
@@ -33,12 +34,12 @@ except ImportError:
     logger.warning("yfinance not available — yfinance macro sources will fail")
 
 try:
-    from fredapi import Fred as _Fred
-    _FREDAPI_AVAILABLE = True
+    import lseg.data as _ld
+    _LSEG_AVAILABLE = True
 except ImportError:
-    _Fred = None
-    _FREDAPI_AVAILABLE = False
-    logger.warning("fredapi not installed — FRED sources will use pandas_datareader fallback")
+    _ld = None
+    _LSEG_AVAILABLE = False
+    logger.warning("lseg.data is not installed. LSEG macro sources will be skipped.")
 
 try:
     import sqlite3 as _sqlite3
@@ -85,13 +86,13 @@ class MacroVariableConfig:
     name : str
         Human-readable label, e.g. "DXY".
     primary_ticker : str
-        yfinance ticker or FRED series ID for primary source.
+        Ticker/symbol/RIC for the primary source.
     primary_source : str
-        "yfinance" or "fred".
+        "yfinance" | "te_market" | "te_indicator" | "lseg".
     fallback_ticker : str, optional
-        Alternative ticker/series if primary fails.
+        Alternative ticker/symbol/RIC if primary fails.
     fallback_source : str, optional
-        "yfinance" or "fred".
+        "yfinance" | "te_market" | "te_indicator" | "lseg".
     transform : str
         "pct_change": weekly % change (equities, FX, commodities).
         "diff": level difference (rate variables, bps equivalent).
@@ -137,8 +138,11 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
         name="US_10Y",
         primary_ticker="USGG10YR:IND",
         primary_source="te_market",
-        fallback_ticker="DGS10",
-        fallback_source="fred",
+        # LSEG RIC for the US 10Y Treasury constant-maturity yield — standard
+        # Refinitiv convention, not verified against a live session (see
+        # CLAUDE.md's Known placeholders entry on this fallback migration).
+        fallback_ticker="US10YT=RR",
+        fallback_source="lseg",
         transform="diff",
         frequency="W",
         description="US 10Y Treasury yield change (bps)",
@@ -147,8 +151,12 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
         name="BI_RATE",
         primary_ticker="Indonesia|Interest Rate",
         primary_source="te_indicator",
-        fallback_ticker=None,
-        fallback_source=None,
+        # LSEG economic-indicator RIC guess ("<country><indicator>=ECI"
+        # convention) — meaningfully less certain than the market-instrument
+        # RICs above; verify against a live session before relying on it
+        # (see CLAUDE.md's Known placeholders entry).
+        fallback_ticker="IDCBIR=ECI",
+        fallback_source="lseg",
         transform="diff",
         frequency="M",
         description="Bank Indonesia policy rate change (bps) — TE indicator",
@@ -167,8 +175,10 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
         name="CHINA_PMI",
         primary_ticker="China|NBS Manufacturing PMI",
         primary_source="te_indicator",
-        fallback_ticker=None,
-        fallback_source=None,
+        # LSEG economic-indicator RIC guess, same lower-confidence caveat as
+        # BI_RATE above — verify before relying on it.
+        fallback_ticker="CNPMI=ECI",
+        fallback_source="lseg",
         transform="diff",
         frequency="M",
         description="China NBS Manufacturing PMI — month-over-month point change",
@@ -177,8 +187,11 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
         name="CPO",
         primary_ticker="CPO1:COM",
         primary_source="te_market",
-        fallback_ticker="PPOILUSDM",
-        fallback_source="fred",
+        # LSEG RIC for Bursa Malaysia CPO futures, continuous front-month —
+        # standard Refinitiv commodity RIC convention, not verified against
+        # a live session.
+        fallback_ticker="FCPOc1",
+        fallback_source="lseg",
         transform="pct_change",
         frequency="W",
         description="Palm oil futures (Bursa Malaysia) — IDX #1 agricultural export",
@@ -197,8 +210,10 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
         name="NICKEL",
         primary_ticker="LMENIS3:COM",
         primary_source="te_market",
-        fallback_ticker="PNICKUSDM",
-        fallback_source="fred",
+        # LSEG RIC for LME 3-month nickel forward — standard LME base-metals
+        # RIC convention, not verified against a live session.
+        fallback_ticker="MNI3",
+        fallback_source="lseg",
         transform="pct_change",
         frequency="W",
         description="LME Nickel 3-month — ANTM, INCO; EV battery demand proxy",
@@ -219,8 +234,6 @@ class MacroDataConfig:
         ISO format start date for historical fetch.
     cache_ttl_seconds : int
         Per-variable cache TTL. Default 3600s (1 hour).
-    fred_api_key : str, optional
-        FRED API key. If None, reads FRED_API_KEY env var.
     fill_method : str
         How to align monthly variables to weekly:
         "ffill" (default) or "interpolate".
@@ -234,7 +247,6 @@ class MacroDataConfig:
     start_date: str = field(default="2005-01-01")
     cache_ttl_seconds: int = field(default=3600)
     te_api_key: Optional[str] = field(default=None)
-    fred_api_key: Optional[str] = field(default=None)
     fill_method: str = field(default="ffill")
     min_overlap_pct: float = field(default=0.70)
 
@@ -276,7 +288,8 @@ class MacroDataResult:
 
 class MacroDataFetcher:
     """
-    Fetch macro variables from yfinance and FRED with fallback and caching.
+    Fetch macro variables from Trading Economics, yfinance, and the LSEG
+    Data Library with fallback and caching.
 
     Parameters
     ----------
@@ -287,6 +300,7 @@ class MacroDataFetcher:
     def __init__(self, config: MacroDataConfig = MacroDataConfig()) -> None:
         self._config = config
         self._cache = DataCache()
+        self._lseg_session_opened = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -494,8 +508,8 @@ class MacroDataFetcher:
             return self._fetch_te_indicator(ticker, start, end)
         if source == "yfinance":
             return self._fetch_yfinance(ticker, start, end)
-        if source == "fred":
-            return self._fetch_fred(ticker, start, end)
+        if source == "lseg":
+            return self._fetch_lseg(ticker, start, end)
         raise ValueError(f"Unknown source '{source}'")
 
     def _fetch_te_market(self, symbol: str, start: str, end: str) -> pd.Series:
@@ -634,69 +648,89 @@ class MacroDataFetcher:
         series.name = ticker
         return series
 
-    def _fetch_fred(self, series_id: str, start: str, end: str) -> pd.Series:
+    def _ensure_lseg_session(self) -> None:
         """
-        Fetch series from FRED via fredapi (preferred) with pandas_datareader fallback.
+        Open an LSEG session on first use (idempotent, self-contained).
 
-        Reads FRED_API_KEY from config or the FRED_API_KEY environment variable
-        (set in .env — loaded automatically via dotenv at import time).
+        Mirrors LSEGSource._ensure_session() in src/data/sources.py rather
+        than lseg_sectors.py's more minimal pattern (which relies on a
+        session already being open elsewhere) — this fetcher shouldn't
+        silently depend on call order with other LSEG integrations
+        elsewhere in the app.
+        """
+        if self._lseg_session_opened:
+            return
+        app_key = os.environ.get("LSEG_APP_KEY", "")
+        try:
+            if app_key:
+                _ld.open_session(app_key=app_key)
+            else:
+                _ld.open_session()
+            self._lseg_session_opened = True
+        except Exception as exc:
+            logger.debug(f"MacroDataFetcher: LSEG session could not be opened: {exc}")
+            raise
+
+    def _fetch_lseg(self, ric: str, start: str, end: str) -> pd.Series:
+        """
+        Fetch a historical level series from the LSEG Data Library.
+
+        Requests a single field ("TRDPRC_1", the platform's default
+        trade/last price) deliberately, mirroring `LSEGSource.fetch_prices()`
+        in src/data/sources.py — the library only builds a (RIC, field)
+        column MultiIndex when *multiple* fields are requested, so a
+        single-RIC, single-field request returns a flat one-column
+        DataFrame regardless of the underlying instrument type (equity,
+        rate, commodity, or economic indicator).
+
+        Requires a configured session (LSEG_APP_KEY env var, or the
+        library's own lseg-data.config.json discovery) — same two-path
+        pattern as LSEGSource and LSEGSectorFetcher, but this is a
+        separate LSEG integration from both of those, not a shared one.
 
         Parameters
         ----------
-        series_id : str
-            FRED series ID (e.g. "DGS10").
+        ric : str
+            LSEG/Refinitiv Instrument Code, e.g. "US10YT=RR" (10Y Treasury
+            yield), "FCPOc1" (Bursa Malaysia CPO futures, continuous
+            front-month), "MNI3" (LME 3-month nickel forward). See
+            DEFAULT_MACRO_VARIABLES and CLAUDE.md's Known placeholders
+            entry for the verification status of each code used here.
         start, end : str
             ISO date strings.
 
         Returns
         -------
         pd.Series
-            Level series from FRED, index = DatetimeIndex.
+            Level series, index = DatetimeIndex.
         """
-        api_key = self._config.fred_api_key or os.environ.get("FRED_API_KEY", "")
-
-        if not api_key:
-            logger.warning(
-                f"FRED_API_KEY not set — fetching {series_id} via pandas_datareader "
-                "(unauthenticated CSV). Add FRED_API_KEY to your .env for reliable access."
-            )
-
-        if _FREDAPI_AVAILABLE:
-            try:
-                fred_kwargs = {"api_key": api_key} if api_key else {}
-                fred = _Fred(**fred_kwargs)
-                data = fred.get_series(series_id, observation_start=start, observation_end=end)
-                if data is None or data.empty:
-                    raise ValueError(f"FRED returned empty series for {series_id}")
-                series = data.dropna()
-                series.name = series_id
-                series.index = pd.DatetimeIndex(series.index)
-                return series
-            except Exception as exc:
-                logger.warning(
-                    f"fredapi fetch failed for {series_id}: {exc}; "
-                    "falling back to pandas_datareader"
-                )
-        else:
-            logger.warning(
-                "fredapi not installed — install it with: pip install fredapi>=0.5.0"
-            )
-
-        # Fallback: pandas_datareader (unauthenticated CSV)
-        try:
-            import pandas_datareader.data as web
-            df = web.DataReader(series_id, "fred", start=start, end=end)
-            if df.empty:
-                raise ValueError(f"pandas_datareader returned empty data for {series_id}")
-            series = df.iloc[:, 0].dropna()
-            series.name = series_id
-            return series
-        except ImportError:
+        if not _LSEG_AVAILABLE:
             raise RuntimeError(
-                f"Neither fredapi nor pandas_datareader is available "
-                f"for FRED series '{series_id}'. "
-                "Install fredapi>=0.5.0 and set FRED_API_KEY in .env."
+                "lseg.data is not installed — pip install lseg-data>=2.0.0"
             )
+
+        self._ensure_lseg_session()
+
+        try:
+            df = _ld.get_history(
+                universe=ric,
+                fields=["TRDPRC_1"],
+                interval="daily",
+                start=start,
+                end=end,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"LSEG get_history failed for {ric}: {exc}") from exc
+
+        if df is None or df.empty:
+            raise ValueError(f"LSEG returned empty data for {ric}")
+
+        series = df.iloc[:, 0].dropna()
+        series.index = pd.DatetimeIndex(series.index)
+        if series.index.tz is not None:
+            series.index = series.index.tz_localize(None)
+        series.name = ric
+        return series
 
     def _apply_transform(self, series: pd.Series, transform: str) -> pd.Series:
         """
