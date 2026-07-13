@@ -16,7 +16,7 @@ Copy `.env.example` to `.env` and fill in your keys:
 LSEG_APP_KEY=your_lseg_app_key_here
 ```
 
-LSEG Data Library is the primary price source; yfinance is the only fallback and works without any key, so the app runs with zero configuration if you don't have LSEG access — `DataManager` automatically falls back to yfinance if no LSEG session/app key is configured or a fetch fails. Macro data additionally benefits from a Trading Economics key (`TE_API_KEY`) and a FRED key (`FRED_API_KEY`) — both optional, with reduced coverage if omitted.
+LSEG Data Library is the primary price source; yfinance is the only fallback and works without any key, so the app runs with zero configuration if you don't have LSEG access — `DataManager` automatically falls back to yfinance if no LSEG session/app key is configured or a fetch fails. The same `LSEG_APP_KEY` is also used as the primary source for macro contagion variables (`src/data/macro_data.py`), with yfinance as a fallback where a real equivalent ticker exists (4 of 9 variables have none — see CLAUDE.md).
 
 ### 2. Install dependencies
 
@@ -50,7 +50,7 @@ No separate lint config is checked in; `python -m py_compile $(git ls-files '*.p
 | Portfolio Input | Holdings entry (tickers + shares) or manual ticker list; diversity metrics (HHI, Gini, effective stocks); Presets tab (save/load/rename named portfolio snapshots) |
 | Historical Stress Testing | 7 crisis scenarios replayed with actual per-stock returns; beta-scaled proxy for stocks that predate the event |
 | Sector Shock Stress Test | Per-stock sector-relative beta (ETF OLS with circularity correction); DCC-GARCH dynamic correlations; Student-t copula tail dependence; HMM regime-conditioned correlation selection |
-| Macro Contagion Stress Test | Leontief input-output contagion model; macro sensitivity matrix (Trading Economics/FRED/yfinance); spectral-radius cascade risk |
+| Macro Contagion Stress Test | Leontief input-output contagion model; macro sensitivity matrix (LSEG primary, yfinance fallback); spectral-radius cascade risk |
 | Monte Carlo Simulation | 4 methods: GBM, block bootstrap, Student-t, jump-diffusion |
 | Hedging Effectiveness | Beta classification against portfolio returns, stress-period vs. full-period fallback, hedge-effectiveness scoring |
 | Risk Analytics | VaR/CVaR (historical, parametric, Cornish-Fisher), GARCH/EWMA volatility, drawdown family, Sharpe/Sortino/Calmar/Omega |

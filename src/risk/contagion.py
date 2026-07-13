@@ -50,13 +50,6 @@ except ImportError:
     _sqlite3 = None
     _SQLITE3_AVAILABLE = False
 
-try:
-    import fredapi as _fredapi
-    _FREDAPI_AVAILABLE = True
-except ImportError:
-    _fredapi = None
-    _FREDAPI_AVAILABLE = False
-
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 

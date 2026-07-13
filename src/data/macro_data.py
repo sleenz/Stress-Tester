@@ -2,8 +2,10 @@
 Macro variable data fetcher for the Leontief contagion model.
 
 Fetches DXY, VIX, US Treasury yield, Bank Indonesia rate, IDR/USD,
-China PMI, palm oil, coal, and nickel from yfinance and FRED with
-automatic fallback, per-variable caching, and graceful degradation.
+China PMI, palm oil, coal, and nickel from the LSEG Data Library
+(primary), with yfinance as a per-variable fallback where a real
+equivalent ticker exists, automatic fallback, per-variable caching,
+and graceful degradation.
 """
 
 from __future__ import annotations
@@ -33,12 +35,12 @@ except ImportError:
     logger.warning("yfinance not available — yfinance macro sources will fail")
 
 try:
-    from fredapi import Fred as _Fred
-    _FREDAPI_AVAILABLE = True
+    import lseg.data as _ld
+    _LSEG_AVAILABLE = True
 except ImportError:
-    _Fred = None
-    _FREDAPI_AVAILABLE = False
-    logger.warning("fredapi not installed — FRED sources will use pandas_datareader fallback")
+    _ld = None
+    _LSEG_AVAILABLE = False
+    logger.warning("lseg.data is not installed. LSEG macro sources will be skipped.")
 
 try:
     import sqlite3 as _sqlite3
@@ -61,17 +63,6 @@ except ImportError:
     _nx = None
     _NETWORKX_AVAILABLE = False
 
-try:
-    import tradingeconomics as _te
-    _TE_AVAILABLE = True
-except ImportError:
-    _te = None
-    _TE_AVAILABLE = False
-    logger.warning(
-        "tradingeconomics not installed — TE sources will fail. "
-        "Install with: pip install tradingeconomics"
-    )
-
 
 # ── Variable configuration ────────────────────────────────────────────────────
 
@@ -85,13 +76,13 @@ class MacroVariableConfig:
     name : str
         Human-readable label, e.g. "DXY".
     primary_ticker : str
-        yfinance ticker or FRED series ID for primary source.
+        Ticker/symbol/RIC for the primary source.
     primary_source : str
-        "yfinance" or "fred".
+        "yfinance" | "lseg".
     fallback_ticker : str, optional
-        Alternative ticker/series if primary fails.
+        Alternative ticker/symbol/RIC if primary fails.
     fallback_source : str, optional
-        "yfinance" or "fred".
+        "yfinance" | "lseg".
     transform : str
         "pct_change": weekly % change (equities, FX, commodities).
         "diff": level difference (rate variables, bps equivalent).
@@ -115,8 +106,11 @@ class MacroVariableConfig:
 DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     MacroVariableConfig(
         name="DXY",
-        primary_ticker="DXY:CUR",
-        primary_source="te_market",
+        # LSEG RIC for the ICE US Dollar Index — standard Refinitiv index
+        # convention (leading dot), not verified against a live session
+        # (see CLAUDE.md's Known placeholders entry on this migration).
+        primary_ticker=".DXY",
+        primary_source="lseg",
         fallback_ticker="DX-Y.NYB",
         fallback_source="yfinance",
         transform="pct_change",
@@ -125,8 +119,10 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="VIX",
-        primary_ticker="VIX:IND",
-        primary_source="te_market",
+        # LSEG RIC for the CBOE Volatility Index — standard Refinitiv index
+        # convention, not verified against a live session.
+        primary_ticker=".VIX",
+        primary_source="lseg",
         fallback_ticker="^VIX",
         fallback_source="yfinance",
         transform="diff",
@@ -135,28 +131,38 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="US_10Y",
-        primary_ticker="USGG10YR:IND",
-        primary_source="te_market",
-        fallback_ticker="DGS10",
-        fallback_source="fred",
+        # LSEG RIC for the US 10Y Treasury constant-maturity yield — standard
+        # Refinitiv convention, not verified against a live session.
+        primary_ticker="US10YT=RR",
+        primary_source="lseg",
+        fallback_ticker="^TNX",
+        fallback_source="yfinance",
         transform="diff",
         frequency="W",
         description="US 10Y Treasury yield change (bps)",
     ),
     MacroVariableConfig(
         name="BI_RATE",
-        primary_ticker="Indonesia|Interest Rate",
-        primary_source="te_indicator",
+        # LSEG economic-indicator RIC guess ("<country><indicator>=ECI"
+        # convention) — meaningfully less certain than the market-instrument
+        # RICs above; verify against a live session before relying on it
+        # (see CLAUDE.md's Known placeholders entry). No yfinance equivalent
+        # exists for a central bank policy rate, so there is no fallback —
+        # if this RIC is wrong, BI_RATE has no safety net (explicit,
+        # confirmed tradeoff — see CLAUDE.md/BUILD_SPEC.md).
+        primary_ticker="IDCBIR=ECI",
+        primary_source="lseg",
         fallback_ticker=None,
         fallback_source=None,
         transform="diff",
         frequency="M",
-        description="Bank Indonesia policy rate change (bps) — TE indicator",
+        description="Bank Indonesia policy rate change (bps)",
     ),
     MacroVariableConfig(
         name="IDR_USD",
-        primary_ticker="USDIDR:CUR",
-        primary_source="te_market",
+        # LSEG RIC for USD/IDR spot — standard Refinitiv FX convention.
+        primary_ticker="IDR=",
+        primary_source="lseg",
         fallback_ticker="IDR=X",
         fallback_source="yfinance",
         transform="pct_change",
@@ -165,8 +171,11 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="CHINA_PMI",
-        primary_ticker="China|NBS Manufacturing PMI",
-        primary_source="te_indicator",
+        # LSEG economic-indicator RIC guess, same lower-confidence caveat as
+        # BI_RATE above — verify before relying on it. No yfinance
+        # equivalent exists for a PMI series, so there is no fallback.
+        primary_ticker="CNPMI=ECI",
+        primary_source="lseg",
         fallback_ticker=None,
         fallback_source=None,
         transform="diff",
@@ -175,18 +184,24 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="CPO",
-        primary_ticker="CPO1:COM",
-        primary_source="te_market",
-        fallback_ticker="PPOILUSDM",
-        fallback_source="fred",
+        # LSEG RIC for Bursa Malaysia CPO futures, continuous front-month —
+        # standard Refinitiv commodity RIC convention, not verified against
+        # a live session. No yfinance equivalent exists for this contract,
+        # so there is no fallback.
+        primary_ticker="FCPOc1",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="pct_change",
         frequency="W",
         description="Palm oil futures (Bursa Malaysia) — IDX #1 agricultural export",
     ),
     MacroVariableConfig(
         name="COAL",
-        primary_ticker="NEWC:COM",
-        primary_source="te_market",
+        # LSEG RIC for ICE Newcastle thermal coal futures, continuous
+        # front-month — standard Refinitiv commodity RIC convention.
+        primary_ticker="MTFc1",
+        primary_source="lseg",
         fallback_ticker="MTF=F",
         fallback_source="yfinance",
         transform="pct_change",
@@ -195,10 +210,13 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="NICKEL",
-        primary_ticker="LMENIS3:COM",
-        primary_source="te_market",
-        fallback_ticker="PNICKUSDM",
-        fallback_source="fred",
+        # LSEG RIC for LME 3-month nickel forward — standard LME base-metals
+        # RIC convention, not verified against a live session. No yfinance
+        # equivalent exists for LME base metals, so there is no fallback.
+        primary_ticker="MNI3",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="pct_change",
         frequency="W",
         description="LME Nickel 3-month — ANTM, INCO; EV battery demand proxy",
@@ -219,8 +237,6 @@ class MacroDataConfig:
         ISO format start date for historical fetch.
     cache_ttl_seconds : int
         Per-variable cache TTL. Default 3600s (1 hour).
-    fred_api_key : str, optional
-        FRED API key. If None, reads FRED_API_KEY env var.
     fill_method : str
         How to align monthly variables to weekly:
         "ffill" (default) or "interpolate".
@@ -233,8 +249,6 @@ class MacroDataConfig:
     )
     start_date: str = field(default="2005-01-01")
     cache_ttl_seconds: int = field(default=3600)
-    te_api_key: Optional[str] = field(default=None)
-    fred_api_key: Optional[str] = field(default=None)
     fill_method: str = field(default="ffill")
     min_overlap_pct: float = field(default=0.70)
 
@@ -276,7 +290,9 @@ class MacroDataResult:
 
 class MacroDataFetcher:
     """
-    Fetch macro variables from yfinance and FRED with fallback and caching.
+    Fetch macro variables from the LSEG Data Library (primary) and
+    yfinance (fallback, where a real equivalent ticker exists) with
+    per-variable caching.
 
     Parameters
     ----------
@@ -287,6 +303,7 @@ class MacroDataFetcher:
     def __init__(self, config: MacroDataConfig = MacroDataConfig()) -> None:
         self._config = config
         self._cache = DataCache()
+        self._lseg_session_opened = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -488,122 +505,11 @@ class MacroDataFetcher:
         self, ticker: str, source: str, start: str, end: str
     ) -> pd.Series:
         """Dispatch to the correct source fetcher."""
-        if source == "te_market":
-            return self._fetch_te_market(ticker, start, end)
-        if source == "te_indicator":
-            return self._fetch_te_indicator(ticker, start, end)
         if source == "yfinance":
             return self._fetch_yfinance(ticker, start, end)
-        if source == "fred":
-            return self._fetch_fred(ticker, start, end)
+        if source == "lseg":
+            return self._fetch_lseg(ticker, start, end)
         raise ValueError(f"Unknown source '{source}'")
-
-    def _fetch_te_market(self, symbol: str, start: str, end: str) -> pd.Series:
-        """
-        Fetch historical market data from Trading Economics.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading Economics market symbol, e.g. "DXY:CUR", "VIX:IND",
-            "CPO1:COM", "NEWC:COM", "LMENIS3:COM", "USDIDR:CUR".
-        start, end : str
-            ISO date strings.
-
-        Returns
-        -------
-        pd.Series
-            Close price series, index = DatetimeIndex (tz-naive).
-        """
-        if not _TE_AVAILABLE:
-            raise RuntimeError(
-                "tradingeconomics not installed — pip install tradingeconomics"
-            )
-        api_key = self._config.te_api_key or os.environ.get("TE_API_KEY", "")
-        if not api_key:
-            raise RuntimeError(
-                f"TE_API_KEY not set — cannot fetch {symbol}. "
-                "Add TE_API_KEY to your .env file."
-            )
-        _te.login(api_key)
-        df = _te.getHistoricalBySymbol(
-            symbol=symbol, initDate=start, endDate=end, output_type="df"
-        )
-        if df is None or (hasattr(df, "empty") and df.empty):
-            raise ValueError(f"Trading Economics returned empty data for {symbol}")
-        date_col = next(
-            (c for c in df.columns if c.lower() == "date"), None
-        )
-        close_col = next(
-            (c for c in df.columns if c.lower() in ("close", "value", "last")), None
-        )
-        if date_col is None or close_col is None:
-            raise ValueError(
-                f"Unexpected TE market columns for {symbol}: {df.columns.tolist()}"
-            )
-        df[date_col] = pd.to_datetime(df[date_col])
-        series = df.set_index(date_col)[close_col].dropna().sort_index()
-        series.index = pd.DatetimeIndex(series.index).tz_localize(None)
-        series.name = symbol
-        return series
-
-    def _fetch_te_indicator(self, country_indicator: str, start: str, end: str) -> pd.Series:
-        """
-        Fetch historical economic indicator from Trading Economics.
-
-        Parameters
-        ----------
-        country_indicator : str
-            Pipe-separated "Country|Indicator" string, e.g.
-            "Indonesia|Interest Rate" or "China|NBS Manufacturing PMI".
-        start, end : str
-            ISO date strings.
-
-        Returns
-        -------
-        pd.Series
-            Indicator value series, index = DatetimeIndex (tz-naive).
-        """
-        if not _TE_AVAILABLE:
-            raise RuntimeError(
-                "tradingeconomics not installed — pip install tradingeconomics"
-            )
-        api_key = self._config.te_api_key or os.environ.get("TE_API_KEY", "")
-        if not api_key:
-            raise RuntimeError(
-                f"TE_API_KEY not set — cannot fetch {country_indicator}. "
-                "Add TE_API_KEY to your .env file."
-            )
-        country, indicator = country_indicator.split("|", 1)
-        _te.login(api_key)
-        df = _te.getHistoricalData(
-            country=country.strip(),
-            indicator=indicator.strip(),
-            initDate=start,
-            endDate=end,
-            output_type="df",
-        )
-        if df is None or (hasattr(df, "empty") and df.empty):
-            raise ValueError(
-                f"Trading Economics returned empty data for "
-                f"{country.strip()}/{indicator.strip()}"
-            )
-        date_col = next(
-            (c for c in df.columns if c.lower() in ("datetime", "date")), None
-        )
-        val_col = next(
-            (c for c in df.columns if c.lower() == "value"), None
-        )
-        if date_col is None or val_col is None:
-            raise ValueError(
-                f"Unexpected TE indicator columns for {country_indicator}: "
-                f"{df.columns.tolist()}"
-            )
-        df[date_col] = pd.to_datetime(df[date_col])
-        series = df.set_index(date_col)[val_col].dropna().sort_index()
-        series.index = pd.DatetimeIndex(series.index).tz_localize(None)
-        series.name = country_indicator
-        return series
 
     def _fetch_yfinance(self, ticker: str, start: str, end: str) -> pd.Series:
         """
@@ -634,69 +540,89 @@ class MacroDataFetcher:
         series.name = ticker
         return series
 
-    def _fetch_fred(self, series_id: str, start: str, end: str) -> pd.Series:
+    def _ensure_lseg_session(self) -> None:
         """
-        Fetch series from FRED via fredapi (preferred) with pandas_datareader fallback.
+        Open an LSEG session on first use (idempotent, self-contained).
 
-        Reads FRED_API_KEY from config or the FRED_API_KEY environment variable
-        (set in .env — loaded automatically via dotenv at import time).
+        Mirrors LSEGSource._ensure_session() in src/data/sources.py rather
+        than lseg_sectors.py's more minimal pattern (which relies on a
+        session already being open elsewhere) — this fetcher shouldn't
+        silently depend on call order with other LSEG integrations
+        elsewhere in the app.
+        """
+        if self._lseg_session_opened:
+            return
+        app_key = os.environ.get("LSEG_APP_KEY", "")
+        try:
+            if app_key:
+                _ld.open_session(app_key=app_key)
+            else:
+                _ld.open_session()
+            self._lseg_session_opened = True
+        except Exception as exc:
+            logger.debug(f"MacroDataFetcher: LSEG session could not be opened: {exc}")
+            raise
+
+    def _fetch_lseg(self, ric: str, start: str, end: str) -> pd.Series:
+        """
+        Fetch a historical level series from the LSEG Data Library.
+
+        Requests a single field ("TRDPRC_1", the platform's default
+        trade/last price) deliberately, mirroring `LSEGSource.fetch_prices()`
+        in src/data/sources.py — the library only builds a (RIC, field)
+        column MultiIndex when *multiple* fields are requested, so a
+        single-RIC, single-field request returns a flat one-column
+        DataFrame regardless of the underlying instrument type (equity,
+        rate, commodity, or economic indicator).
+
+        Requires a configured session (LSEG_APP_KEY env var, or the
+        library's own lseg-data.config.json discovery) — same two-path
+        pattern as LSEGSource and LSEGSectorFetcher, but this is a
+        separate LSEG integration from both of those, not a shared one.
 
         Parameters
         ----------
-        series_id : str
-            FRED series ID (e.g. "DGS10").
+        ric : str
+            LSEG/Refinitiv Instrument Code, e.g. "US10YT=RR" (10Y Treasury
+            yield), "FCPOc1" (Bursa Malaysia CPO futures, continuous
+            front-month), "MNI3" (LME 3-month nickel forward). See
+            DEFAULT_MACRO_VARIABLES and CLAUDE.md's Known placeholders
+            entry for the verification status of each code used here.
         start, end : str
             ISO date strings.
 
         Returns
         -------
         pd.Series
-            Level series from FRED, index = DatetimeIndex.
+            Level series, index = DatetimeIndex.
         """
-        api_key = self._config.fred_api_key or os.environ.get("FRED_API_KEY", "")
-
-        if not api_key:
-            logger.warning(
-                f"FRED_API_KEY not set — fetching {series_id} via pandas_datareader "
-                "(unauthenticated CSV). Add FRED_API_KEY to your .env for reliable access."
-            )
-
-        if _FREDAPI_AVAILABLE:
-            try:
-                fred_kwargs = {"api_key": api_key} if api_key else {}
-                fred = _Fred(**fred_kwargs)
-                data = fred.get_series(series_id, observation_start=start, observation_end=end)
-                if data is None or data.empty:
-                    raise ValueError(f"FRED returned empty series for {series_id}")
-                series = data.dropna()
-                series.name = series_id
-                series.index = pd.DatetimeIndex(series.index)
-                return series
-            except Exception as exc:
-                logger.warning(
-                    f"fredapi fetch failed for {series_id}: {exc}; "
-                    "falling back to pandas_datareader"
-                )
-        else:
-            logger.warning(
-                "fredapi not installed — install it with: pip install fredapi>=0.5.0"
-            )
-
-        # Fallback: pandas_datareader (unauthenticated CSV)
-        try:
-            import pandas_datareader.data as web
-            df = web.DataReader(series_id, "fred", start=start, end=end)
-            if df.empty:
-                raise ValueError(f"pandas_datareader returned empty data for {series_id}")
-            series = df.iloc[:, 0].dropna()
-            series.name = series_id
-            return series
-        except ImportError:
+        if not _LSEG_AVAILABLE:
             raise RuntimeError(
-                f"Neither fredapi nor pandas_datareader is available "
-                f"for FRED series '{series_id}'. "
-                "Install fredapi>=0.5.0 and set FRED_API_KEY in .env."
+                "lseg.data is not installed — pip install lseg-data>=2.0.0"
             )
+
+        self._ensure_lseg_session()
+
+        try:
+            df = _ld.get_history(
+                universe=ric,
+                fields=["TRDPRC_1"],
+                interval="daily",
+                start=start,
+                end=end,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"LSEG get_history failed for {ric}: {exc}") from exc
+
+        if df is None or df.empty:
+            raise ValueError(f"LSEG returned empty data for {ric}")
+
+        series = df.iloc[:, 0].dropna()
+        series.index = pd.DatetimeIndex(series.index)
+        if series.index.tz is not None:
+            series.index = series.index.tz_localize(None)
+        series.name = ric
+        return series
 
     def _apply_transform(self, series: pd.Series, transform: str) -> pd.Series:
         """
