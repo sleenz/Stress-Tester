@@ -2,9 +2,10 @@
 Macro variable data fetcher for the Leontief contagion model.
 
 Fetches DXY, VIX, US Treasury yield, Bank Indonesia rate, IDR/USD,
-China PMI, palm oil, coal, and nickel from Trading Economics (primary),
-with yfinance and the LSEG Data Library as per-variable fallbacks,
-automatic fallback, per-variable caching, and graceful degradation.
+China PMI, palm oil, coal, and nickel from the LSEG Data Library
+(primary), with yfinance as a per-variable fallback where a real
+equivalent ticker exists, automatic fallback, per-variable caching,
+and graceful degradation.
 """
 
 from __future__ import annotations
@@ -62,17 +63,6 @@ except ImportError:
     _nx = None
     _NETWORKX_AVAILABLE = False
 
-try:
-    import tradingeconomics as _te
-    _TE_AVAILABLE = True
-except ImportError:
-    _te = None
-    _TE_AVAILABLE = False
-    logger.warning(
-        "tradingeconomics not installed — TE sources will fail. "
-        "Install with: pip install tradingeconomics"
-    )
-
 
 # ── Variable configuration ────────────────────────────────────────────────────
 
@@ -88,11 +78,11 @@ class MacroVariableConfig:
     primary_ticker : str
         Ticker/symbol/RIC for the primary source.
     primary_source : str
-        "yfinance" | "te_market" | "te_indicator" | "lseg".
+        "yfinance" | "lseg".
     fallback_ticker : str, optional
         Alternative ticker/symbol/RIC if primary fails.
     fallback_source : str, optional
-        "yfinance" | "te_market" | "te_indicator" | "lseg".
+        "yfinance" | "lseg".
     transform : str
         "pct_change": weekly % change (equities, FX, commodities).
         "diff": level difference (rate variables, bps equivalent).
@@ -116,8 +106,11 @@ class MacroVariableConfig:
 DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     MacroVariableConfig(
         name="DXY",
-        primary_ticker="DXY:CUR",
-        primary_source="te_market",
+        # LSEG RIC for the ICE US Dollar Index — standard Refinitiv index
+        # convention (leading dot), not verified against a live session
+        # (see CLAUDE.md's Known placeholders entry on this migration).
+        primary_ticker=".DXY",
+        primary_source="lseg",
         fallback_ticker="DX-Y.NYB",
         fallback_source="yfinance",
         transform="pct_change",
@@ -126,8 +119,10 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="VIX",
-        primary_ticker="VIX:IND",
-        primary_source="te_market",
+        # LSEG RIC for the CBOE Volatility Index — standard Refinitiv index
+        # convention, not verified against a live session.
+        primary_ticker=".VIX",
+        primary_source="lseg",
         fallback_ticker="^VIX",
         fallback_source="yfinance",
         transform="diff",
@@ -136,35 +131,38 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="US_10Y",
-        primary_ticker="USGG10YR:IND",
-        primary_source="te_market",
         # LSEG RIC for the US 10Y Treasury constant-maturity yield — standard
-        # Refinitiv convention, not verified against a live session (see
-        # CLAUDE.md's Known placeholders entry on this fallback migration).
-        fallback_ticker="US10YT=RR",
-        fallback_source="lseg",
+        # Refinitiv convention, not verified against a live session.
+        primary_ticker="US10YT=RR",
+        primary_source="lseg",
+        fallback_ticker="^TNX",
+        fallback_source="yfinance",
         transform="diff",
         frequency="W",
         description="US 10Y Treasury yield change (bps)",
     ),
     MacroVariableConfig(
         name="BI_RATE",
-        primary_ticker="Indonesia|Interest Rate",
-        primary_source="te_indicator",
         # LSEG economic-indicator RIC guess ("<country><indicator>=ECI"
         # convention) — meaningfully less certain than the market-instrument
         # RICs above; verify against a live session before relying on it
-        # (see CLAUDE.md's Known placeholders entry).
-        fallback_ticker="IDCBIR=ECI",
-        fallback_source="lseg",
+        # (see CLAUDE.md's Known placeholders entry). No yfinance equivalent
+        # exists for a central bank policy rate, so there is no fallback —
+        # if this RIC is wrong, BI_RATE has no safety net (explicit,
+        # confirmed tradeoff — see CLAUDE.md/BUILD_SPEC.md).
+        primary_ticker="IDCBIR=ECI",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="diff",
         frequency="M",
-        description="Bank Indonesia policy rate change (bps) — TE indicator",
+        description="Bank Indonesia policy rate change (bps)",
     ),
     MacroVariableConfig(
         name="IDR_USD",
-        primary_ticker="USDIDR:CUR",
-        primary_source="te_market",
+        # LSEG RIC for USD/IDR spot — standard Refinitiv FX convention.
+        primary_ticker="IDR=",
+        primary_source="lseg",
         fallback_ticker="IDR=X",
         fallback_source="yfinance",
         transform="pct_change",
@@ -173,33 +171,37 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="CHINA_PMI",
-        primary_ticker="China|NBS Manufacturing PMI",
-        primary_source="te_indicator",
         # LSEG economic-indicator RIC guess, same lower-confidence caveat as
-        # BI_RATE above — verify before relying on it.
-        fallback_ticker="CNPMI=ECI",
-        fallback_source="lseg",
+        # BI_RATE above — verify before relying on it. No yfinance
+        # equivalent exists for a PMI series, so there is no fallback.
+        primary_ticker="CNPMI=ECI",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="diff",
         frequency="M",
         description="China NBS Manufacturing PMI — month-over-month point change",
     ),
     MacroVariableConfig(
         name="CPO",
-        primary_ticker="CPO1:COM",
-        primary_source="te_market",
         # LSEG RIC for Bursa Malaysia CPO futures, continuous front-month —
         # standard Refinitiv commodity RIC convention, not verified against
-        # a live session.
-        fallback_ticker="FCPOc1",
-        fallback_source="lseg",
+        # a live session. No yfinance equivalent exists for this contract,
+        # so there is no fallback.
+        primary_ticker="FCPOc1",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="pct_change",
         frequency="W",
         description="Palm oil futures (Bursa Malaysia) — IDX #1 agricultural export",
     ),
     MacroVariableConfig(
         name="COAL",
-        primary_ticker="NEWC:COM",
-        primary_source="te_market",
+        # LSEG RIC for ICE Newcastle thermal coal futures, continuous
+        # front-month — standard Refinitiv commodity RIC convention.
+        primary_ticker="MTFc1",
+        primary_source="lseg",
         fallback_ticker="MTF=F",
         fallback_source="yfinance",
         transform="pct_change",
@@ -208,12 +210,13 @@ DEFAULT_MACRO_VARIABLES: list[MacroVariableConfig] = [
     ),
     MacroVariableConfig(
         name="NICKEL",
-        primary_ticker="LMENIS3:COM",
-        primary_source="te_market",
         # LSEG RIC for LME 3-month nickel forward — standard LME base-metals
-        # RIC convention, not verified against a live session.
-        fallback_ticker="MNI3",
-        fallback_source="lseg",
+        # RIC convention, not verified against a live session. No yfinance
+        # equivalent exists for LME base metals, so there is no fallback.
+        primary_ticker="MNI3",
+        primary_source="lseg",
+        fallback_ticker=None,
+        fallback_source=None,
         transform="pct_change",
         frequency="W",
         description="LME Nickel 3-month — ANTM, INCO; EV battery demand proxy",
@@ -246,7 +249,6 @@ class MacroDataConfig:
     )
     start_date: str = field(default="2005-01-01")
     cache_ttl_seconds: int = field(default=3600)
-    te_api_key: Optional[str] = field(default=None)
     fill_method: str = field(default="ffill")
     min_overlap_pct: float = field(default=0.70)
 
@@ -288,8 +290,9 @@ class MacroDataResult:
 
 class MacroDataFetcher:
     """
-    Fetch macro variables from Trading Economics, yfinance, and the LSEG
-    Data Library with fallback and caching.
+    Fetch macro variables from the LSEG Data Library (primary) and
+    yfinance (fallback, where a real equivalent ticker exists) with
+    per-variable caching.
 
     Parameters
     ----------
@@ -502,122 +505,11 @@ class MacroDataFetcher:
         self, ticker: str, source: str, start: str, end: str
     ) -> pd.Series:
         """Dispatch to the correct source fetcher."""
-        if source == "te_market":
-            return self._fetch_te_market(ticker, start, end)
-        if source == "te_indicator":
-            return self._fetch_te_indicator(ticker, start, end)
         if source == "yfinance":
             return self._fetch_yfinance(ticker, start, end)
         if source == "lseg":
             return self._fetch_lseg(ticker, start, end)
         raise ValueError(f"Unknown source '{source}'")
-
-    def _fetch_te_market(self, symbol: str, start: str, end: str) -> pd.Series:
-        """
-        Fetch historical market data from Trading Economics.
-
-        Parameters
-        ----------
-        symbol : str
-            Trading Economics market symbol, e.g. "DXY:CUR", "VIX:IND",
-            "CPO1:COM", "NEWC:COM", "LMENIS3:COM", "USDIDR:CUR".
-        start, end : str
-            ISO date strings.
-
-        Returns
-        -------
-        pd.Series
-            Close price series, index = DatetimeIndex (tz-naive).
-        """
-        if not _TE_AVAILABLE:
-            raise RuntimeError(
-                "tradingeconomics not installed — pip install tradingeconomics"
-            )
-        api_key = self._config.te_api_key or os.environ.get("TE_API_KEY", "")
-        if not api_key:
-            raise RuntimeError(
-                f"TE_API_KEY not set — cannot fetch {symbol}. "
-                "Add TE_API_KEY to your .env file."
-            )
-        _te.login(api_key)
-        df = _te.getHistoricalBySymbol(
-            symbol=symbol, initDate=start, endDate=end, output_type="df"
-        )
-        if df is None or (hasattr(df, "empty") and df.empty):
-            raise ValueError(f"Trading Economics returned empty data for {symbol}")
-        date_col = next(
-            (c for c in df.columns if c.lower() == "date"), None
-        )
-        close_col = next(
-            (c for c in df.columns if c.lower() in ("close", "value", "last")), None
-        )
-        if date_col is None or close_col is None:
-            raise ValueError(
-                f"Unexpected TE market columns for {symbol}: {df.columns.tolist()}"
-            )
-        df[date_col] = pd.to_datetime(df[date_col])
-        series = df.set_index(date_col)[close_col].dropna().sort_index()
-        series.index = pd.DatetimeIndex(series.index).tz_localize(None)
-        series.name = symbol
-        return series
-
-    def _fetch_te_indicator(self, country_indicator: str, start: str, end: str) -> pd.Series:
-        """
-        Fetch historical economic indicator from Trading Economics.
-
-        Parameters
-        ----------
-        country_indicator : str
-            Pipe-separated "Country|Indicator" string, e.g.
-            "Indonesia|Interest Rate" or "China|NBS Manufacturing PMI".
-        start, end : str
-            ISO date strings.
-
-        Returns
-        -------
-        pd.Series
-            Indicator value series, index = DatetimeIndex (tz-naive).
-        """
-        if not _TE_AVAILABLE:
-            raise RuntimeError(
-                "tradingeconomics not installed — pip install tradingeconomics"
-            )
-        api_key = self._config.te_api_key or os.environ.get("TE_API_KEY", "")
-        if not api_key:
-            raise RuntimeError(
-                f"TE_API_KEY not set — cannot fetch {country_indicator}. "
-                "Add TE_API_KEY to your .env file."
-            )
-        country, indicator = country_indicator.split("|", 1)
-        _te.login(api_key)
-        df = _te.getHistoricalData(
-            country=country.strip(),
-            indicator=indicator.strip(),
-            initDate=start,
-            endDate=end,
-            output_type="df",
-        )
-        if df is None or (hasattr(df, "empty") and df.empty):
-            raise ValueError(
-                f"Trading Economics returned empty data for "
-                f"{country.strip()}/{indicator.strip()}"
-            )
-        date_col = next(
-            (c for c in df.columns if c.lower() in ("datetime", "date")), None
-        )
-        val_col = next(
-            (c for c in df.columns if c.lower() == "value"), None
-        )
-        if date_col is None or val_col is None:
-            raise ValueError(
-                f"Unexpected TE indicator columns for {country_indicator}: "
-                f"{df.columns.tolist()}"
-            )
-        df[date_col] = pd.to_datetime(df[date_col])
-        series = df.set_index(date_col)[val_col].dropna().sort_index()
-        series.index = pd.DatetimeIndex(series.index).tz_localize(None)
-        series.name = country_indicator
-        return series
 
     def _fetch_yfinance(self, ticker: str, start: str, end: str) -> pd.Series:
         """

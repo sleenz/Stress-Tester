@@ -113,7 +113,7 @@ with col3:
     st.markdown("#### Macro Contagion")
     st.markdown("""
     - Leontief input-output contagion model
-    - Trading Economics / yfinance / LSEG macro factors
+    - LSEG / yfinance macro factors
     - Monte Carlo simulation (GBM, bootstrap, Student-t, jump-diffusion)
     """)
 

@@ -514,6 +514,62 @@ failed gracefully (`Session is not opened. Can't send any request`) →
 
 ---
 
+## POST-PHASE-7 — Macro contagion data: delete Trading Economics, LSEG primary everywhere — DONE
+
+Follow-up to the FRED migration above, same explicit user directive
+taken further: replace Trading Economics too, so LSEG is primary for
+all 9 macro variables and yfinance is the only fallback. Before
+implementing, flagged a real viability gap and got it confirmed: 4 of
+9 variables (CPO, NICKEL, BI_RATE, CHINA_PMI) have **no yfinance
+equivalent at all** — no Bursa Malaysia palm oil futures ticker, no LME
+base metals, no central-bank-rate or PMI coverage on yfinance. User
+explicitly confirmed: delete Trading Economics everywhere anyway and
+accept that these 4 variables end up with zero fallback (rather than
+keeping Trading Economics for just those 4).
+
+1. **`_fetch_te_market()`/`_fetch_te_indicator()` deleted outright**
+   from `src/data/macro_data.py`, along with `MacroDataConfig.te_api_key`
+   and the module's `tradingeconomics` import guard. `_fetch_source()`'s
+   `"te_market"`/`"te_indicator"` dispatch branches removed.
+2. **All 9 `DEFAULT_MACRO_VARIABLES` entries now have `primary_source="lseg"`**:
+   - 5 with a real yfinance fallback: DXY (`.DXY` → `DX-Y.NYB`), VIX
+     (`.VIX` → `^VIX`), IDR_USD (`IDR=` → `IDR=X`), COAL (`MTFc1` →
+     `MTF=F`), US_10Y (`US10YT=RR` → `^TNX`, newly added — yfinance does
+     carry a 10Y Treasury yield ticker even though it wasn't used
+     before).
+   - 4 with **no fallback at all** (the confirmed, accepted gap): CPO
+     (`FCPOc1`), NICKEL (`MNI3`), BI_RATE (`IDCBIR=ECI`), CHINA_PMI
+     (`CNPMI=ECI`).
+3. **`requirements.txt`**: `tradingeconomics>=0.3.0` removed.
+   **`.env.example`**: `TE_API_KEY` removed.
+4. **README.md, CLAUDE.md, docs/architecture.md, app/Home.py,
+   app/pages/2_Stress_Testing.py**: updated to describe the
+   LSEG-primary/yfinance-fallback (or no-fallback) chain, with the
+   4-variable gap called out explicitly wherever the chain is
+   described, not buried.
+
+**Risk profile, stated plainly:** all 9 primary LSEG RIC codes are
+unverified against a live session (no credentials available in this
+sandbox) — this migration trades a real, working Trading Economics
+integration for an unverified one across the board. The 5 variables
+with a yfinance fallback degrade gracefully if their LSEG RIC is wrong
+(confirmed non-crashing in the FRED-migration verification above,
+same code path). The 4 without a fallback do not — a wrong RIC for
+CPO/NICKEL/BI_RATE/CHINA_PMI means that variable is simply missing
+from every macro contagion run until the RIC is corrected. This was
+surfaced to the user before implementation (not discovered after the
+fact) and the "accept the gap" option was explicitly chosen over
+"keep Trading Economics for just these 4."
+
+Verified: `python -m py_compile` clean; `pytest tests/ -v` 17/17
+passed. Same graceful-degradation code path as the FRED migration
+(unchanged `_fetch_lseg()`/`_ensure_lseg_session()`/`_fetch_with_cache()`/
+`fetch()` machinery) — a primary-source failure with no fallback
+configured lands in `missing_variables` exactly like a primary+fallback
+failure does, `fetch()` still never raises.
+
+---
+
 **Delivery note:** save this file at the repo root (or `docs/`) and
 reference it from `CLAUDE.md` rather than re-pasting it fresh each
 session — Claude Code will pick it up as persistent project context, and

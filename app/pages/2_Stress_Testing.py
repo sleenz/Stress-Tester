@@ -929,7 +929,7 @@ with tab4:
                 portfolio_value=float(st.session_state.macro_stress_portfolio_value),
             )
 
-            with st.spinner("Fitting macro contagion engine (fetching Trading Economics + yfinance + LSEG data)…"):
+            with st.spinner("Fitting macro contagion engine (fetching LSEG + yfinance data)…"):
                 try:
                     _mc_engine = MacroStressEngine(
                         returns=returns,

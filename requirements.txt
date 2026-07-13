@@ -7,7 +7,9 @@ scipy>=1.10.0
 # LSEG Data Library is the primary price source (DataManager tries it first);
 # yfinance is the only fallback (used automatically if no LSEG session/app key
 # is configured, or if the fetch fails) — also still used directly for TRBC
-# sector lookups' fallback path in lseg_sectors.py.
+# sector lookups' fallback path in lseg_sectors.py, and as the primary source
+# for macro contagion variables in macro_data.py (yfinance fallback there too,
+# where a real equivalent ticker exists).
 lseg-data>=2.0.0
 yfinance>=0.2.40
 requests>=2.31.0
@@ -37,7 +39,6 @@ loguru>=0.7.0
 joblib>=1.3.0
 tqdm>=4.66.0
 networkx>=3.0
-tradingeconomics>=0.3.0
 
 # Testing
 pytest>=7.4.0
