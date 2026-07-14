@@ -268,6 +268,185 @@ def _render_regime_dcc_diagnostics(engine) -> None:
                 st.plotly_chart(fig_hm, width="stretch")
 
 
+def _covariance_ellipse_xy(mean2: np.ndarray, cov2: np.ndarray, n_std: float, n_points: int = 100):
+    """Parametric (x, y) points for the n_std-sigma ellipse of a 2D Gaussian
+    with the given mean/covariance — an eigendecomposition of cov2 gives the
+    ellipse's axis lengths (n_std * sqrt(eigenvalue)) and orientation
+    (eigenvectors), not a circle: the whole point of 2d is showing states
+    that are elliptical/tilted/differently sized, not assuming isotropy."""
+    eigvals, eigvecs = np.linalg.eigh(cov2)
+    eigvals = np.clip(eigvals, 0.0, None)  # guard tiny negative FP noise
+    theta = np.linspace(0.0, 2.0 * np.pi, n_points)
+    circle = np.stack([np.cos(theta), np.sin(theta)])          # (2, n_points)
+    radii = n_std * np.sqrt(eigvals)                             # (2,)
+    ellipse = eigvecs @ (radii[:, None] * circle)                # (2, n_points)
+    return mean2[0] + ellipse[0], mean2[1] + ellipse[1]
+
+
+def _mahalanobis_sq(points_xy: np.ndarray, mean2: np.ndarray, cov2: np.ndarray) -> np.ndarray:
+    """Squared Mahalanobis distance of each row in points_xy (T, 2) to
+    (mean2, cov2) — used to test whether a point sits inside another
+    state's n_std-sigma ellipse (inside iff distance <= n_std**2)."""
+    diff = points_xy - mean2
+    try:
+        inv_cov = np.linalg.inv(cov2)
+    except np.linalg.LinAlgError:
+        inv_cov = np.linalg.pinv(cov2)
+    return np.einsum("ti,ij,tj->t", diff, inv_cov, diff)
+
+
+def _render_emission_separability_diagnostic(engine) -> None:
+    """Emission cluster separability (HMM state-quality) diagnostic — 2D.
+
+    Separate from _render_regime_dcc_diagnostics() above: that panel (2a-2c)
+    checks whether regime labels align with real DCC correlation dynamics
+    over TIME. This one is not time-ordered at all — it checks whether the
+    HMM's K states are actually separable Gaussians in feature space, i.e.
+    whether K itself is well-specified, by plotting the real fitted
+    GaussianHMM covariance ellipses (not circles) against the real
+    standardised feature points. A degenerate (near-zero-area) or
+    near-coincident ellipse is a real finding about K being misspecified —
+    rendered as-is, not smoothed over or auto-merged. This function does not
+    change K as a side effect of what it observes; that's a separate
+    decision with its own tradeoffs, out of scope here.
+    """
+    regime_result = engine._regime_result
+    if regime_result is None:
+        st.info("Requires the HMM Regime model fitted — it failed for this fit.")
+        return
+    if (
+        regime_result.feature_matrix is None
+        or regime_result.hmm_means is None
+        or regime_result.hmm_covars is None
+    ):
+        st.info(
+            "Emission parameters unavailable for this fit — re-run "
+            "**Fetch Sectors & Fit Models** to regenerate them."
+        )
+        return
+
+    fm = regime_result.feature_matrix
+    x_col, y_col = "rolling_vol", "mean_return"
+    if x_col not in fm.columns or y_col not in fm.columns:
+        st.info(
+            f"This 2D view needs '{x_col}' and '{y_col}' among the HMM's "
+            f"configured features; this fit used {list(fm.columns)} instead."
+        )
+        return
+
+    labels_ordered = _regime_label_order(regime_result)
+    n_states = len(labels_ordered)
+    diag_colors = {
+        lbl: _regime_diag_color(i, n_states) for i, lbl in enumerate(labels_ordered)
+    }
+
+    x_idx = list(fm.columns).index(x_col)
+    y_idx = list(fm.columns).index(y_col)
+    points_xy = fm[[x_col, y_col]].values
+    hard_states = regime_result.state_sequence.reindex(fm.index).values
+    probs_df = regime_result.state_probabilities.reindex(fm.index)
+
+    means_2d = regime_result.hmm_means[:, [x_idx, y_idx]]
+    covars_2d = np.array([
+        regime_result.hmm_covars[k][np.ix_([x_idx, y_idx], [x_idx, y_idx])]
+        for k in range(n_states)
+    ])
+
+    # A point is a "boundary" case if it sits inside the 2-sigma ellipse of
+    # any state OTHER than its own hard-decoded label — exactly the
+    # geometric condition the task describes, not a probability threshold.
+    maha_by_state = np.stack([
+        _mahalanobis_sq(points_xy, means_2d[k], covars_2d[k]) for k in range(n_states)
+    ])  # (n_states, T)
+    own_state = hard_states.astype(int)
+    is_boundary = np.zeros(len(points_xy), dtype=bool)
+    for k in range(n_states):
+        other_inside = (maha_by_state <= 4.0) & (np.arange(n_states)[:, None] != k)
+        is_boundary |= (own_state == k) & other_inside.any(axis=0)
+
+    def _hover_text(i: int) -> str:
+        own_lbl = labels_ordered[own_state[i]]
+        row = probs_df.iloc[i]
+        top2 = row.sort_values(ascending=False).head(2)
+        posterior_str = " / ".join(
+            f"{labels_ordered[int(col)]} {p:.0%}" for col, p in top2.items()
+        )
+        date_str = str(fm.index[i].date()) if hasattr(fm.index[i], "date") else str(fm.index[i])
+        flag = " ⚠ boundary point" if is_boundary[i] else ""
+        return f"{date_str}: hard label={own_lbl}{flag}<br>posterior: {posterior_str}"
+
+    hover_texts = [_hover_text(i) for i in range(len(points_xy))]
+
+    fig = go.Figure()
+
+    ellipse_stats = []
+    for k, lbl in enumerate(labels_ordered):
+        color = diag_colors[lbl]
+        for n_std, dash in [(1.0, "solid"), (2.0, "dot")]:
+            ex, ey = _covariance_ellipse_xy(means_2d[k], covars_2d[k], n_std)
+            fig.add_trace(go.Scatter(
+                x=ex, y=ey, mode="lines",
+                line=dict(color=color, width=2, dash=dash),
+                name=f"{lbl.replace('_', ' ').capitalize()} {n_std:.0f}σ",
+                hoverinfo="skip", showlegend=False,
+            ))
+        eigvals = np.clip(np.linalg.eigvalsh(covars_2d[k]), 0.0, None)
+        ellipse_stats.append({
+            "Regime": lbl.replace("_", " ").capitalize(),
+            "n_days": int((own_state == k).sum()),
+            "sqrt(det(Σ)) [area proxy]": float(np.sqrt(max(np.prod(eigvals), 0.0))),
+            "min eigenvalue": float(eigvals.min()),
+            "max eigenvalue": float(eigvals.max()),
+        })
+
+    for k, lbl in enumerate(labels_ordered):
+        mask = own_state == k
+        fig.add_trace(go.Scatter(
+            x=points_xy[mask, 0], y=points_xy[mask, 1],
+            mode="markers",
+            marker=dict(
+                color=diag_colors[lbl], size=7,
+                line=dict(
+                    color="black",
+                    width=[1.5 if is_boundary[i] else 0 for i in np.where(mask)[0]],
+                ),
+            ),
+            name=lbl.replace("_", " ").capitalize(),
+            text=[hover_texts[i] for i in np.where(mask)[0]],
+            hoverinfo="text",
+        ))
+
+    fig.update_layout(
+        height=480,
+        xaxis_title="Standardised rolling volatility (z-score)",
+        yaxis_title="Standardised mean return (z-score)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(t=40),
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    n_boundary = int(is_boundary.sum())
+    st.caption(
+        f"Solid = 1σ ellipse, dotted = 2σ ellipse, both from the real fitted "
+        f"GaussianHMM.means_/covars_ (not circles — orientation and axis "
+        f"lengths come from each state's actual covariance). Points outlined "
+        f"in black ({n_boundary} of {len(points_xy)}) sit inside another "
+        f"state's 2σ ellipse; hover for the soft posterior breakdown instead "
+        f"of trusting the hard label alone. A near-zero 'area proxy' or two "
+        f"regimes with similar area/eigenvalues and overlapping ellipses "
+        f"below is a separability finding about this fit's n_states, not "
+        f"something this panel corrects automatically."
+    )
+    st.dataframe(
+        pd.DataFrame(ellipse_stats).set_index("Regime").style.format({
+            "sqrt(det(Σ)) [area proxy]": "{:.4f}",
+            "min eigenvalue": "{:.4f}",
+            "max eigenvalue": "{:.4f}",
+        }),
+        width="stretch",
+    )
+
+
 st.set_page_config(page_title="Stress Testing", page_icon=None, layout="wide")
 
 st.title("Stress Testing & Scenario Analysis")
@@ -756,6 +935,17 @@ with tab3:
                 "P&L results below."
             )
             _render_regime_dcc_diagnostics(_engine)
+
+        with st.expander("HMM Emission Cluster Separability (State-Quality Check)", expanded=False):
+            st.caption(
+                "A different diagnostic from the one above — not time-ordered, "
+                "and does not check DCC correlation alignment. This checks "
+                "whether the HMM's states are actually separable Gaussians in "
+                "feature space (real fitted covariance ellipses, not circles), "
+                "i.e. whether the configured number of regimes is well-specified. "
+                "Observation only — does not change the number of states."
+            )
+            _render_emission_separability_diagnostic(_engine)
 
         st.markdown("---")
 

@@ -91,6 +91,25 @@ class RegimeResult:
     config: RegimeConfig
     fit_log_likelihood: float
     convergence_achieved: bool
+    # Diagnostic-only additions (emission cluster separability view) — the
+    # standardised feature matrix and the fitted GaussianHMM's emission
+    # parameters were already computed inside fit() but previously discarded
+    # once state_sequence/state_probabilities were derived from them. Exposed
+    # here, relabelled with the same state_order permutation used everywhere
+    # else in fit(), purely so a diagnostic panel can render them — nothing
+    # about the fitting algorithm changes. Optional/defaulted so nothing else
+    # constructing a RegimeResult is required to supply them.
+    feature_matrix: Optional[pd.DataFrame] = field(default=None)
+    # shape (T_valid, n_features), standardised, index=valid dates,
+    # columns=the resolved feature names (same order as _build_features
+    # actually used, which may be a subset of config.features if any name
+    # was unrecognised).
+    hmm_means: Optional[np.ndarray] = field(default=None)
+    # shape (n_states, n_features) in relabelled (calm->crisis) order.
+    hmm_covars: Optional[np.ndarray] = field(default=None)
+    # shape (n_states, n_features, n_features) in relabelled order — always
+    # a full covariance matrix per state regardless of
+    # config.covariance_type (see MarketRegimeDetector._full_covariances).
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -114,6 +133,7 @@ class MarketRegimeDetector:
     def __init__(self, config: RegimeConfig = RegimeConfig()) -> None:
         self._config = config
         self._last_valid_dates: Optional[pd.Index] = None  # set by _build_features
+        self._last_feature_names: Optional[list] = None    # set by _build_features
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -190,7 +210,46 @@ class MarketRegimeDetector:
         feature_df = (feature_df - col_means) / col_stds
 
         self._last_valid_dates = feature_df.index
+        self._last_feature_names = list(feature_df.columns)
         return feature_df.values.astype(float)
+
+    @staticmethod
+    def _full_covariances(model: "GaussianHMM", covariance_type: str) -> np.ndarray:
+        """
+        Return (n_components, n_features, n_features) full covariance
+        matrices regardless of ``covariance_type``.
+
+        Deliberately bypasses ``model.covars_`` for ``covariance_type ==
+        "spherical"``: verified against the installed hmmlearn (0.3.3) that
+        its public ``covars_`` property returns the wrong shape for
+        'spherical' — ``(n_components * n_features, n_features, n_features)``
+        instead of ``(n_components, n_features, n_features)`` — because
+        ``hmmlearn.utils.fill_covars()`` calls ``np.ravel()`` on the
+        internal ``_covars_`` array (shape ``(n_components, n_features)``,
+        the same scalar variance broadcast redundantly across the feature
+        axis for 'spherical') without accounting for that redundancy, so it
+        ends up treating each of the ``n_features`` repeated copies as a
+        separate state. 'full'/'diag'/'tied' are unaffected and read from
+        the public ``covars_`` property directly.
+        """
+        n_components = model.means_.shape[0]
+        n_features = model.means_.shape[1]
+        if covariance_type == "spherical":
+            variances = np.asarray(model._covars_)[:, 0]
+            return np.array([v * np.eye(n_features) for v in variances])
+        covars = np.asarray(model.covars_)
+        if covars.shape[0] != n_components:
+            # Defensive fallback for any other unforeseen hmmlearn shape
+            # quirk on a covariance_type this method wasn't verified
+            # against — better to (visibly) truncate/pad than raise inside
+            # a diagnostic-only code path.
+            logger.warning(
+                f"_full_covariances: unexpected covars_ shape {covars.shape} "
+                f"for covariance_type='{covariance_type}', n_components="
+                f"{n_components}; truncating to first {n_components}."
+            )
+            covars = covars[:n_components]
+        return covars
 
     @staticmethod
     def _avg_run_length(states: np.ndarray, target: int) -> float:
@@ -379,6 +438,12 @@ class MarketRegimeDetector:
         old_transmat = best_model.transmat_
         new_transmat = old_transmat[state_order, :][:, state_order]
 
+        # ── Diagnostic-only: relabelled feature matrix + HMM emission params
+        feature_names = self._last_feature_names or [f"feat_{i}" for i in range(n_feat)]
+        feature_matrix_df = pd.DataFrame(X, index=valid_dates, columns=feature_names)
+        hmm_means = np.asarray(best_model.means_)[state_order]
+        hmm_covars = self._full_covariances(best_model, config.covariance_type)[state_order]
+
         logger.info(
             f"MarketRegimeDetector.fit() done in {time.time() - t_start:.2f}s — "
             f"current_regime='{current_state_label}' (p={current_state_prob:.2%}), "
@@ -397,6 +462,9 @@ class MarketRegimeDetector:
             config=config,
             fit_log_likelihood=best_ll,
             convergence_achieved=convergence_achieved,
+            feature_matrix=feature_matrix_df,
+            hmm_means=hmm_means,
+            hmm_covars=hmm_covars,
         )
 
     def get_regime_correlation(
@@ -680,6 +748,41 @@ if __name__ == "__main__":
         assert set(result4.state_sequence.unique()).issubset({0, 1})
         assert result4.current_state_label in {"calm", "crisis"}
         print("  4-feature / 2-state HMM ✓")
+
+        # ── feature_matrix / hmm_means / hmm_covars (diagnostic-only fields)
+        assert result.feature_matrix is not None
+        assert list(result.feature_matrix.columns) == ["rolling_vol", "mean_return"]
+        assert result.feature_matrix.index.equals(result.state_sequence.index)
+        assert result.hmm_means.shape == (3, 2)
+        assert result.hmm_covars.shape == (3, 2, 2)
+        for k in range(3):
+            cov_k = result.hmm_covars[k]
+            assert np.allclose(cov_k, cov_k.T, atol=1e-9), f"covars[{k}] not symmetric"
+            assert np.all(np.linalg.eigvalsh(cov_k) >= -1e-9), f"covars[{k}] not PSD"
+        # calm (label 0) should be the lowest-mean-vol state in feature space too
+        assert result.hmm_means[0, 0] < result.hmm_means[2, 0], (
+            "calm state's mean rolling_vol should be lower than crisis's"
+        )
+        print("  feature_matrix/hmm_means/hmm_covars: shapes+PSD+relabel order ✓")
+
+        # ── 'spherical' covariance_type: covars_ must come out (n_states, F, F)
+        # despite the installed hmmlearn's public covars_ property returning
+        # the wrong shape for this type (see _full_covariances docstring).
+        config_sph = RegimeConfig(
+            n_states=2, n_init=2, n_iter=50, covariance_type="spherical",
+        )
+        result_sph = MarketRegimeDetector(config_sph).fit(sector_returns)
+        assert result_sph.hmm_covars.shape == (2, 2, 2), (
+            f"spherical covars shape wrong: {result_sph.hmm_covars.shape}"
+        )
+        for k in range(2):
+            cov_k = result_sph.hmm_covars[k]
+            assert np.allclose(cov_k[0, 1], 0.0, atol=1e-9), "spherical must be diagonal"
+            assert np.isclose(cov_k[0, 0], cov_k[1, 1], atol=1e-9), (
+                "spherical must have equal variance on both axes"
+            )
+        print("  'spherical' covariance_type: hmm_covars shape/diagonal-equal ✓ "
+              "(bypasses the buggy public covars_ property)")
 
         print("\n✓ [MarketRegimeDetector] smoke test passed")
 
