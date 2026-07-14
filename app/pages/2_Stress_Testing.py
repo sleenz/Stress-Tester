@@ -168,11 +168,6 @@ def _render_regime_dcc_diagnostics(engine) -> None:
 
     # ── 2a. Regime timeline with DCC correlation overlay ───────────────────
     st.markdown("##### Regime Timeline vs. Mean DCC-GARCH Correlation")
-    st.caption(
-        "Background bands = HMM regime state (calm → crisis). Line = mean "
-        "off-diagonal DCC-GARCH conditional correlation across sectors, same "
-        "date axis."
-    )
 
     state_seq = regime_result.state_sequence
     corr_series = _mean_offdiag_corr_series(dcc_result)
@@ -928,23 +923,9 @@ with tab3:
                     st.info("DCC-GARCH model not fitted.")
 
         with st.expander("Regime ↔ DCC-GARCH Correlation Diagnostics", expanded=False):
-            st.caption(
-                "Diagnostic only — checks whether HMM regime labels visually "
-                "coincide with DCC-GARCH correlation spikes, a precondition "
-                "before walk-forward backtesting. Does not affect the stress "
-                "P&L results below."
-            )
             _render_regime_dcc_diagnostics(_engine)
 
         with st.expander("HMM Emission Cluster Separability (State-Quality Check)", expanded=False):
-            st.caption(
-                "A different diagnostic from the one above — not time-ordered, "
-                "and does not check DCC correlation alignment. This checks "
-                "whether the HMM's states are actually separable Gaussians in "
-                "feature space (real fitted covariance ellipses, not circles), "
-                "i.e. whether the configured number of regimes is well-specified. "
-                "Observation only — does not change the number of states."
-            )
             _render_emission_separability_diagnostic(_engine)
 
         st.markdown("---")
