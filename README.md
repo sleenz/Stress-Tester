@@ -93,3 +93,8 @@ Stress-Tester/
 ```
 
 If you're importing from `src/portfolio_builder/cache.py` and hit something unexpected: it's kept in place on purpose (a `network.py` type-annotation dependency), not dead code, even though nothing calls its `run_nightly_refresh()`/SQLite-cache path.
+
+## NOTE FOR FUTURE DEVELOPMENT 
+Currently made for US equity due to inability to test IDN equity using yfinance api 
+### Critical : Change index to IHSG compared to S&P500 that was used here. 
+You might also create 2 mode to stress test US or IDN equities. 

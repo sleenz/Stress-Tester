@@ -60,7 +60,8 @@ class SectorStressScenario:
     beta_window: Optional[str] = field(default=None)
     # beta_window: "short" | "long" | "average" | None (None = use SectorStressConfig default)
 
-
+# ALL THE THE SCENARIOS BELOW ARE EXAMPLES NOT REAL DATA BUT AS A BENCHMARK. 
+# Users can define their own scenarios as needed.
 DEFAULT_SCENARIOS: list[SectorStressScenario] = [
     SectorStressScenario(
         name="Tech Selloff",
