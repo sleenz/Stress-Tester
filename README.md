@@ -96,5 +96,7 @@ If you're importing from `src/portfolio_builder/cache.py` and hit something unex
 
 ## NOTE FOR FUTURE DEVELOPMENT 
 Currently made for US equity due to inability to test IDN equity using yfinance api 
+e.g. sector stress test : equity beta calculated is compared to sector etfs (XLT,XLE,XLY) 
+which is a US's ETF
 ### Critical : Change index to IHSG compared to S&P500 that was used here. 
 You might also create 2 mode to stress test US or IDN equities. 
