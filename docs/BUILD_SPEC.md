@@ -665,6 +665,115 @@ tab5 function-definition block further down the same script):**
 
 ---
 
+## POST-PHASE-7 — Emission cluster separability diagnostic (Step 2d, Sector Shock tab) — DONE
+
+Follow-up to the Regime + DCC-GARCH diagnostics panel above, added after
+that PR (#9) had already merged — restarted this branch from `main` per
+the standard "PR already merged" procedure before building this on top.
+Adds a second, deliberately separate diagnostic: where the panel above
+(2a-2c) checks whether regime labels align with real DCC correlation
+dynamics over *time*, this one (2d) checks whether the HMM's `n_states`
+Gaussian emissions are actually separable in feature space at all — a
+different, non-time-ordered precondition check for the same future
+walk-forward backtest work. `DCCGARCHModel`, `MarketRegimeDetector`'s
+fitting algorithm, and `SectorStressEngine`'s stress-calculation logic
+were not touched — only additive data capture in `regime_detection.py`.
+
+**Data audit (grep-verified against `regime_detection.py`, not assumed):**
+1. Window length: `"rolling_vol"` uses `config.rolling_vol_window`
+   (default **21** trading days, a single fixed window — not a 20-60 day
+   range). `"mean_return"` uses **no window** — the raw daily
+   cross-sector mean return. (`"vol_of_vol"`, not in the default feature
+   set, applies that same 21-day window twice.) All features are
+   z-score standardised before the HMM ever sees them.
+2. `.predict_proba()`'s smoothed posterior was already exposed as
+   `RegimeResult.state_probabilities` — no follow-up needed there.
+3. `RegimeResult` did **not** expose the standardised feature matrix or
+   the fitted `GaussianHMM.means_`/`covars_` — both are computed inside
+   `fit()` but were discarded once `state_sequence`/`state_probabilities`
+   were derived from them. Added as new, defaulted (`= None`) fields —
+   `feature_matrix`, `hmm_means`, `hmm_covars` — populated from data
+   `fit()` already computes, reordered with the exact same `state_order`
+   permutation already used to relabel `state_sequence`/
+   `state_probabilities`/the transition matrix. No existing field,
+   default, or the fitting algorithm itself changed.
+
+**hmmlearn bug found and worked around:** the installed `hmmlearn==0.3.3`'s
+public `GaussianHMM.covars_` property returns the wrong shape for
+`covariance_type="spherical"` — `(n_components * n_features, n_features,
+n_features)` instead of `(n_components, n_features, n_features)` —
+because `hmmlearn.utils.fill_covars()` calls `np.ravel()` on the internal
+`_covars_` array (which redundantly repeats each state's scalar variance
+across the feature axis) without accounting for that redundancy.
+`MarketRegimeDetector._full_covariances()` (new private static method)
+bypasses the public property for `"spherical"` and reconstructs the
+correct `(n_states, n_features, n_features)` array directly from
+`model._covars_`; `"full"`/`"diag"`/`"tied"` are unaffected and unchanged.
+This page (`2_Stress_Testing.py`) always fits with the default
+`covariance_type="full"` (only `n_states`/`n_init` are overridden from
+the UI), so this bug was not reachable through the app before this fix —
+handled anyway since the config field exists and a diagnostic panel
+should not silently mis-render if that ever changes.
+
+**Built** (`_render_emission_separability_diagnostic()` in
+`app/pages/2_Stress_Testing.py`, wired into its own expander — "HMM
+Emission Cluster Separability (State-Quality Check)" — placed as a
+sibling to, not merged into, the existing "Regime ↔ DCC-GARCH Correlation
+Diagnostics" expander, per the explicit instruction not to conflate the
+two):
+- Scatter of `(rolling_vol, mean_return)` in the standardised feature
+  space the HMM actually operates in, one point per date, colored by the
+  real Viterbi hard label using the same `_regime_label_order()`/
+  `_regime_diag_color()` helpers as the 2a-2c panel (consistent palette,
+  not reinvented).
+- One real covariance ellipse per state at 1σ and 2σ, from the actual
+  fitted `hmm_means`/`hmm_covars` via eigendecomposition — genuinely
+  elliptical/tilted/differently-sized, not circles.
+- Boundary-point flagging: a point is flagged (black marker outline) iff
+  its squared Mahalanobis distance to some *other* state's mean/covariance
+  is `<= 4` (i.e. inside that state's own 2σ ellipse) — the literal
+  geometric condition, not a probability-threshold proxy for it. Every
+  point's hover text (not just flagged ones) shows its hard label plus
+  the top-2 soft posterior probabilities from `state_probabilities`, so a
+  boundary point's ambiguity is never presented as if the hard label were
+  unambiguous.
+- A `sqrt(det(Σ))` "area proxy" + eigenvalue range table per regime is
+  rendered below the chart so degenerate or near-coincident ellipses are
+  visible as numbers too, not just a picture — no threshold decides
+  "degenerate" for the user; the panel does not auto-merge or otherwise
+  act on what it shows, per the explicit scope boundary against using
+  this to change `n_states` as a side effect.
+- Graceful degradation: if the fit's configured features aren't exactly
+  `rolling_vol`/`mean_return` (a non-default `RegimeConfig.features`),
+  the panel shows an explanatory `st.info()` instead of rendering a wrong
+  or partial 2D projection.
+
+**Verified:**
+- `python -m py_compile` clean on both changed files.
+- `python -m src.risk.regime_detection` (module's own smoke test,
+  extended) — new assertions on `feature_matrix`/`hmm_means`/`hmm_covars`
+  shapes, symmetry, and PSD-ness, plus a dedicated `covariance_type=
+  "spherical"` case confirming the hmmlearn-bug workaround produces the
+  correct `(n_states, 2, 2)` diagonal-equal-variance shape. All existing
+  assertions in that smoke test still pass unchanged.
+- `pytest tests/ -v` 17/17 passed (unaffected).
+- `python -m src.simulation.sector_stress` (module's own smoke test) —
+  unaffected, still passes.
+- A standalone script fit a **real** `SectorStressEngine` (real
+  `DCCGARCHModel.fit()` + real `MarketRegimeDetector.fit()`) on the same
+  synthetic-but-realistic calm→crisis→calm sector-return data used for
+  the 2a-2c verification, loaded the actual page module via `importlib`,
+  and called `_render_emission_separability_diagnostic()` directly
+  against that real fit's `regime_result` — confirmed a 9-trace figure
+  (3 states × [1σ ellipse, 2σ ellipse, scatter]), all 880 real feature
+  points accounted for across the per-state traces, and 69 of them
+  correctly flagged as boundary points by the real Mahalanobis-distance
+  check. A second real fit with a non-default `features=["vol_of_vol",
+  "cross_sector_dispersion"]` config confirmed the graceful-degradation
+  path renders the info message and zero figures, as intended.
+
+---
+
 **Delivery note:** save this file at the repo root (or `docs/`) and
 reference it from `CLAUDE.md` rather than re-pasting it fresh each
 session — Claude Code will pick it up as persistent project context, and
