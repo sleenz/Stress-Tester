@@ -570,6 +570,101 @@ failure does, `fetch()` still never raises.
 
 ---
 
+## POST-PHASE-7 — Regime + DCC-GARCH correlation diagnostics panel (Sector Shock tab) — DONE
+
+Added a diagnostic-only UI panel to `app/pages/2_Stress_Testing.py`'s
+Sector Shock tab, verifying that `MarketRegimeDetector`'s HMM regime
+labels visually coincide with `DCCGARCHModel` correlation spikes — a
+precondition check before any future walk-forward backtesting work.
+`DCCGARCHModel`, `MarketRegimeDetector`, and `SectorStressEngine`'s
+stress-calculation path were not touched, per the absolute constraint
+against modifying reviewed/merged core algorithm modules.
+
+**Data-availability audit (done before writing any UI code) — all three
+were already available, no plumbing needed:**
+1. Full per-date HMM state sequence: already exposed via
+   `RegimeResult.state_sequence` (`src/risk/regime_detection.py`),
+   already threaded onto every `SectorStressResult.regime_result`
+   (`src/simulation/sector_stress.py`).
+2. Full per-date DCC-GARCH correlation history: already exposed via
+   `DCCGARCHResult.conditional_correlations` (shape `(T, N, N)`,
+   `src/risk/dcc_garch.py`), aligned to `.conditional_volatilities.index`,
+   already threaded onto every `SectorStressResult.dcc_result`.
+3. `SectorStressEngine._select_correlation()` does call
+   `get_current_regime_correlation()` → `get_regime_correlation()`
+   today, but only for the current regime, and that function's return
+   type is a `pd.DataFrame` only — it computes `n_common` internally
+   purely to decide its own `<5`-observation identity-matrix fallback
+   and never returns it to any caller. Rather than modify
+   `MarketRegimeDetector` to return it, the new page-local
+   `_diag_n_common_regime_obs()` helper generalizes the pattern already
+   used (and documented as verified bit-exact) by this same file's
+   existing 7b regime-overlay closure — read-only, same date-
+   intersection logic, extended from calm/crisis-only to every
+   configured regime label.
+
+**Built (all in `app/pages/2_Stress_Testing.py`, module-level helpers
+placed before `st.set_page_config()` since tab3 executes long before the
+tab5 function-definition block further down the same script):**
+1. Regime timeline (`add_vrect` background bands, calm→crisis) with a
+   mean-off-diagonal DCC correlation line overlaid on the same date
+   axis — renders accurately, does not editorialize on whether the line
+   spikes inside crisis bands.
+2. Regime-conditioned correlation small multiples — one `px.imshow`
+   heatmap per configured regime (2, 3, or 4 depending on the existing
+   "Number of states" control), each labelled with its real
+   `n_observations`.
+3. Identity-fallback surfacing — any panel with `n_observations < 5` is
+   rendered with a flat gray colorscale (colorbar hidden) instead of the
+   real one, titled "— FALLBACK", with a visible `st.warning(...)`
+   annotation, so a rare regime's trivial identity matrix can't be
+   mistaken for a real "no correlation" finding.
+
+**Deviations from the literal task brief, both deliberate:**
+- The brief said to reuse `heat_color.py`'s RdYlGn approach for the
+  regime heatmaps' colormap. `heat_color.py` was deleted outright in
+  this fork's Phase 1 trim (see `src/portfolio_builder/` row in
+  `CLAUDE.md`'s directory map) and, even before deletion, was a
+  Portfolio-Builder ranking/score colormap, never used for correlation
+  matrices. This file's own actual, current convention for every other
+  correlation-matrix render (Beta Matrix, DCC Correlation Matrix,
+  "Correlation Matrix Used in This Run") is `RdBu_r` with a zero
+  midpoint — used here instead, since that is the real "consistency
+  with the rest of the app" the brief was asking for.
+- The brief named `app/pages/4_Stress_Testing.py`; this fork's actual
+  file is `app/pages/2_Stress_Testing.py` (page files were renumbered
+  during the Phase 1 trim — see `CLAUDE.md`'s directory map).
+- No dedicated regime color palette exists elsewhere in the app to
+  reuse for the calm→crisis severity bands (grep-checked: only a blank
+  per-regime emoji dict and a uniform node color in the existing
+  Correlation Network tab's regime overlay) — reused this app's
+  existing green=favourable/red=adverse `RdYlGn` convention (P&L
+  gradients, Sortino ratio, shock-direction text) instead of inventing
+  an unrelated one.
+
+**Verified:**
+- `python -m py_compile app/pages/2_Stress_Testing.py` clean.
+- `pytest tests/ -v` 17/17 passed (unaffected — no `src/` module was
+  touched).
+- A standalone script fit a **real** `SectorStressEngine` (real
+  `DCCGARCHModel.fit()` + real `MarketRegimeDetector.fit()`, no
+  mocking) on synthetic-but-realistic sector returns with an injected
+  calm→crisis→calm volatility/correlation regime shift, loaded the
+  actual page module via `importlib`, and exercised every new helper
+  and the full `_render_regime_dcc_diagnostics()` call against that
+  real fit's `dcc_result`/`regime_result` — confirmed correct
+  calm→crisis label ordering, mean-off-diagonal correlation in
+  `[-1, 1]`, correct `n_observations` per regime from the real
+  (unmodified) `get_regime_correlation()`, and 4 well-formed Plotly
+  figures (1 timeline + 3 regime heatmaps) with the expected trace/band
+  counts. A second, manufactured 3-observation "crisis" regime (same
+  pattern as this file's own documented manufactured-3-observation
+  verification for the 7b overlay) confirmed the `<5` fallback branch
+  renders correctly and agrees with the real `get_regime_correlation()`
+  identity-matrix fallback.
+
+---
+
 **Delivery note:** save this file at the repo root (or `docs/`) and
 reference it from `CLAUDE.md` rather than re-pasting it fresh each
 session — Claude Code will pick it up as persistent project context, and

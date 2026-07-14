@@ -41,6 +41,233 @@ from src.portfolio_builder.network import (
 )
 import networkx as nx
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Regime + DCC-GARCH correlation diagnostics (Sector Shock tab)
+#
+# Diagnostic-only helpers verifying that MarketRegimeDetector's HMM regime
+# labels visually coincide with DCCGARCHModel correlation spikes — a
+# precondition check before any walk-forward backtesting work. Defined at
+# module scope (before tab3's block executes) rather than inside tab5's
+# region alongside _edge_color_gradient()/_render_correlation_network(),
+# since Streamlit runs this script top-to-bottom and tab3 (Sector Shock)
+# executes long before tab5's function definitions are reached.
+#
+# All data these helpers consume is already exposed by the existing,
+# unmodified dataclasses — no changes to DCCGARCHModel, MarketRegimeDetector,
+# or SectorStressEngine's stress-calculation path were needed:
+#   * regime_result.state_sequence (RegimeResult, regime_detection.py) is the
+#     full per-date HMM regime label history, already threaded onto every
+#     SectorStressResult.regime_result.
+#   * dcc_result.conditional_correlations (DCCGARCHResult, dcc_garch.py) is
+#     the full (T, N, N) per-date fitted correlation history, already
+#     threaded onto every SectorStressResult.dcc_result.
+#   * get_regime_correlation() (regime_detection.py) never returns its
+#     internally-computed n_common observation count — only the correlation
+#     DataFrame — so _diag_n_common_regime_obs() below externally replicates
+#     that function's own date-intersection logic read-only, generalizing
+#     the same pattern already used (and verified bit-exact) by tab5's
+#     calm/crisis-only _n_common_regime_obs() closure to every regime label.
+# ──────────────────────────────────────────────────────────────────────────────
+
+_REGIME_DIAG_CORR_COLORSCALE = "RdBu_r"
+# Matches this file's own existing correlation-matrix convention (Beta
+# Matrix, DCC Correlation Matrix, "Correlation Matrix Used in This Run" all
+# use RdBu_r with a zero midpoint) rather than heat_color.py's RdYlGn — that
+# module was a Portfolio Builder ranking/score colormap, deleted outright in
+# this fork's trim (see CLAUDE.md), and was never actually used for
+# correlation matrices even before deletion. RdBu_r is the real "rest of the
+# app" consistency target for a correlation heatmap.
+
+_REGIME_DIAG_SEVERITY_COLORSCALE = "RdYlGn"
+# For regime-severity bands (calm -> crisis), there is no dedicated regime
+# color palette elsewhere in the app to match (grep-checked: only a blank
+# per-regime emoji dict and a uniform node color in the existing Correlation
+# Network tab's regime overlay). RdYlGn is reused here because it's this
+# app's existing green=favourable/red=adverse convention for other severity
+# dimensions (P&L background gradients, Sortino ratio, shock-direction text).
+
+
+def _regime_label_order(regime_result) -> list:
+    """Ordered calm -> crisis regime labels for this fit's n_states, sourced
+    from RegimeConfig.regime_label_map — the same ordering
+    MarketRegimeDetector.fit() itself relabels states by post-fit."""
+    cfg = regime_result.config
+    label_map = cfg.regime_label_map.get(
+        cfg.n_states, {i: f"state_{i}" for i in range(cfg.n_states)}
+    )
+    return [label_map[i] for i in sorted(label_map)]
+
+
+def _regime_diag_color(position: int, n_states: int) -> str:
+    """Calm (position 0) -> green, crisis (last position) -> red, sampled
+    from _REGIME_DIAG_SEVERITY_COLORSCALE."""
+    t = 1.0 if n_states <= 1 else 1.0 - (position / (n_states - 1))
+    return pcolors.sample_colorscale(_REGIME_DIAG_SEVERITY_COLORSCALE, [t])[0]
+
+
+def _diag_n_common_regime_obs(regime_label: str, dcc_result, regime_result) -> int:
+    """Read-only replica of MarketRegimeDetector.get_regime_correlation()'s
+    own aligned-observation count (regime_detection.py) — does not modify
+    that function. Generalizes tab5's existing calm/crisis-only
+    _n_common_regime_obs() closure to any regime label, since
+    get_regime_correlation() computes this count internally purely to decide
+    its <5-observation identity-matrix fallback and never returns it."""
+    cfg = regime_result.config
+    label_map = cfg.regime_label_map.get(
+        cfg.n_states, {i: f"state_{i}" for i in range(cfg.n_states)}
+    )
+    rev_map = {v: k for k, v in label_map.items()}
+    if regime_label not in rev_map:
+        return 0
+    target = rev_map[regime_label]
+    mask = regime_result.state_sequence == target
+    target_dates = regime_result.state_sequence.index[mask]
+    common = target_dates.intersection(dcc_result.conditional_volatilities.index)
+    return len(common)
+
+
+def _mean_offdiag_corr_series(dcc_result) -> pd.Series:
+    """Mean off-diagonal DCC-GARCH conditional correlation per date — the
+    overlay line for the regime-timeline diagnostic. The DCC recursion
+    (dcc_garch.py::_run_dcc_recursion) always fills the diagonal to exactly
+    1.0, so mean-off-diagonal reduces to (matrix_sum - N) / (N * (N - 1))."""
+    corr_stack = dcc_result.conditional_correlations  # (T, N, N)
+    n = corr_stack.shape[1]
+    if n < 2:
+        return pd.Series(dtype=float)
+    sums = corr_stack.sum(axis=(1, 2))
+    mean_offdiag = (sums - n) / (n * (n - 1))
+    return pd.Series(mean_offdiag, index=dcc_result.conditional_volatilities.index)
+
+
+def _render_regime_dcc_diagnostics(engine) -> None:
+    """Renders the three diagnostic components (regime timeline + DCC
+    overlay, regime-conditioned correlation small multiples, identity-
+    fallback surfacing) against ``engine``'s already-fitted
+    ``_dcc_result``/``_regime_result`` — real DCCGARCHModel/MarketRegimeDetector
+    output, not placeholder data. Renders accurately; does not editorialise
+    on whether correlation actually spikes inside crisis-colored bands."""
+    dcc_result = engine._dcc_result
+    regime_result = engine._regime_result
+    if dcc_result is None or regime_result is None:
+        st.info(
+            "Requires both DCC-GARCH and HMM Regime models fitted — one or "
+            "both failed for this fit (see fitting warnings above)."
+        )
+        return
+
+    labels_ordered = _regime_label_order(regime_result)
+    n_states = len(labels_ordered)
+    diag_colors = {
+        lbl: _regime_diag_color(i, n_states) for i, lbl in enumerate(labels_ordered)
+    }
+    label_map = regime_result.config.regime_label_map.get(
+        regime_result.config.n_states,
+        {i: f"state_{i}" for i in range(regime_result.config.n_states)},
+    )
+
+    # ── 2a. Regime timeline with DCC correlation overlay ───────────────────
+    st.markdown("##### Regime Timeline vs. Mean DCC-GARCH Correlation")
+    st.caption(
+        "Background bands = HMM regime state (calm → crisis). Line = mean "
+        "off-diagonal DCC-GARCH conditional correlation across sectors, same "
+        "date axis."
+    )
+
+    state_seq = regime_result.state_sequence
+    corr_series = _mean_offdiag_corr_series(dcc_result)
+
+    fig_timeline = go.Figure()
+
+    states_arr = state_seq.values
+    dates_arr = state_seq.index
+    run_start = 0
+    for i in range(1, len(states_arr) + 1):
+        if i == len(states_arr) or states_arr[i] != states_arr[run_start]:
+            s_label = label_map.get(
+                int(states_arr[run_start]), f"state_{states_arr[run_start]}"
+            )
+            fig_timeline.add_vrect(
+                x0=dates_arr[run_start], x1=dates_arr[i - 1],
+                fillcolor=diag_colors.get(s_label, "#9ca3af"),
+                opacity=0.22, line_width=0,
+            )
+            run_start = i
+
+    fig_timeline.add_trace(go.Scatter(
+        x=corr_series.index, y=corr_series.values,
+        mode="lines", name="Mean off-diagonal DCC correlation",
+        line=dict(color="#111827", width=1.6),
+    ))
+    for lbl in labels_ordered:
+        fig_timeline.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(size=10, color=diag_colors[lbl]),
+            name=lbl.replace("_", " ").capitalize(),
+            showlegend=True,
+        ))
+
+    fig_timeline.update_layout(
+        height=420,
+        yaxis_title="Mean off-diagonal correlation",
+        xaxis_title="Date",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(t=40),
+    )
+    st.plotly_chart(fig_timeline, width="stretch")
+
+    # ── 2b/2c. Regime-conditioned correlation heatmaps (small multiples) ───
+    st.markdown("##### Regime-Conditioned Correlation Heatmaps")
+    st.caption(
+        "One heatmap per HMM regime, averaged DCC-GARCH sector correlation "
+        "over that regime's aligned dates. Panels with < 5 aligned "
+        "observations are an identity-matrix fallback, not a real finding — "
+        "grayed out and annotated below."
+    )
+
+    cols = st.columns(n_states)
+    for col, lbl in zip(cols, labels_ordered):
+        with col:
+            n_obs = _diag_n_common_regime_obs(lbl, dcc_result, regime_result)
+            try:
+                corr_df = engine._regime_detector.get_regime_correlation(
+                    lbl, dcc_result, regime_result
+                )
+            except ValueError as exc:
+                st.error(f"'{lbl}': {exc}")
+                continue
+
+            display_label = lbl.replace("_", " ").capitalize()
+            if n_obs < 5:
+                fig_hm = px.imshow(
+                    corr_df.round(3),
+                    color_continuous_scale=[[0, "#4b5563"], [1, "#4b5563"]],
+                    zmin=-1, zmax=1,
+                    text_auto=".2f",
+                    title=f"{display_label} — FALLBACK",
+                )
+                fig_hm.update_layout(
+                    height=300, coloraxis_showscale=False, margin=dict(t=60),
+                )
+                st.plotly_chart(fig_hm, width="stretch")
+                st.warning(
+                    f"Fallback: only {n_obs} observation"
+                    f"{'s' if n_obs != 1 else ''}, < 5 required. Identity "
+                    "matrix — not a real correlation finding."
+                )
+            else:
+                fig_hm = px.imshow(
+                    corr_df.round(3),
+                    color_continuous_scale=_REGIME_DIAG_CORR_COLORSCALE,
+                    color_continuous_midpoint=0,
+                    zmin=-1, zmax=1,
+                    text_auto=".2f",
+                    title=f"{display_label} (n={n_obs})",
+                )
+                fig_hm.update_layout(height=300, margin=dict(t=60))
+                st.plotly_chart(fig_hm, width="stretch")
+
+
 st.set_page_config(page_title="Stress Testing", page_icon=None, layout="wide")
 
 st.title("Stress Testing & Scenario Analysis")
@@ -520,6 +747,15 @@ with tab3:
                     st.plotly_chart(_fig_corr, width="stretch")
                 else:
                     st.info("DCC-GARCH model not fitted.")
+
+        with st.expander("Regime ↔ DCC-GARCH Correlation Diagnostics", expanded=False):
+            st.caption(
+                "Diagnostic only — checks whether HMM regime labels visually "
+                "coincide with DCC-GARCH correlation spikes, a precondition "
+                "before walk-forward backtesting. Does not affect the stress "
+                "P&L results below."
+            )
+            _render_regime_dcc_diagnostics(_engine)
 
         st.markdown("---")
 
