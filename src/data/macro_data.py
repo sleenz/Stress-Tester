@@ -544,11 +544,10 @@ class MacroDataFetcher:
         """
         Open an LSEG session on first use (idempotent, self-contained).
 
-        Mirrors LSEGSource._ensure_session() in src/data/sources.py rather
-        than lseg_sectors.py's more minimal pattern (which relies on a
-        session already being open elsewhere) — this fetcher shouldn't
-        silently depend on call order with other LSEG integrations
-        elsewhere in the app.
+        Mirrors LSEGSource._ensure_session() in src/data/sources.py and
+        LSEGSectorFetcher._ensure_session() in lseg_sectors.py — each of
+        the three LSEG integrations in this app opens its own session
+        rather than depending on call order with the others.
         """
         if self._lseg_session_opened:
             return
