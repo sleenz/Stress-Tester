@@ -1,6 +1,7 @@
 """LSEG TRBC sector classification fetcher with yfinance fallback and TTL caching."""
 
 import hashlib
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -143,6 +144,7 @@ class LSEGSectorFetcher:
         """
         self._config = config
         self._cache = DataCache(ttl_historical=config.cache_ttl_seconds)
+        self._session_opened = False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -152,6 +154,30 @@ class LSEGSectorFetcher:
         """Generate a deterministic cache key from a sorted ticker list."""
         key_string = "lseg_sectors|" + "|".join(sorted(tickers))
         return hashlib.md5(key_string.encode()).hexdigest()
+
+    def _ensure_session(self) -> None:
+        """
+        Open an LSEG session on first use.
+
+        `ld.get_data()` resolves its session via the library's own
+        `get_default()` — it does not open one itself. Without this call,
+        every `ld.get_data()` below fails unless some other LSEG
+        integration elsewhere in the process happened to call
+        `ld.open_session()` first, which isn't guaranteed. Mirrors
+        `LSEGSource._ensure_session()` in `sources.py`.
+        """
+        if self._session_opened:
+            return
+        app_key = os.getenv("LSEG_APP_KEY")
+        try:
+            if app_key:
+                ld.open_session(app_key=app_key)
+            else:
+                ld.open_session()
+            self._session_opened = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"LSEG session could not be opened: {exc}")
+            raise
 
     def _fetch_lseg_batch(
         self, batch: list[str]
@@ -179,6 +205,7 @@ class LSEGSectorFetcher:
             self._config.industry_field,
         ]
         try:
+            self._ensure_session()
             df = ld.get_data(universe=batch, fields=fields)
             if df is None or df.empty:
                 return result
